@@ -1,7 +1,8 @@
 """LLM provider abstraction with an offline rule-based fallback.
 
-Selection: env LLM_PROVIDER (claude|openai|offline). Missing keys fall back to
-offline so the whole system runs without any external API (PRD §9.1).
+Selection: env LLM_PROVIDER (claude|openai|gemini|ollama|offline). Missing keys
+fall back to offline so the whole system runs without any external API
+(PRD §9.1). Ollama is local (OpenAI-compatible) and needs no key.
 """
 
 from __future__ import annotations
@@ -76,15 +77,77 @@ class OpenAIProvider:
         return resp.choices[0].message.content or ""
 
 
+class GeminiProvider:
+    """Google Gemini provider (requires `google-genai` and GEMINI_API_KEY)."""
+
+    name = "gemini"
+
+    def __init__(self, api_key: str, model: str) -> None:
+        from google import genai  # imported lazily
+
+        self._client = genai.Client(api_key=api_key)
+        self._model = model
+
+    def complete(self, prompt: str, *, system: str | None = None) -> str:
+        content = f"{system}\n\n{prompt}" if system else prompt
+        resp = self._client.models.generate_content(model=self._model, contents=content)
+        return resp.text or ""
+
+
+class OllamaProvider:
+    """Local Ollama via its OpenAI-compatible endpoint (requires `openai` and a
+    running `ollama serve`). No API key needed — the key field is ignored."""
+
+    name = "ollama"
+
+    def __init__(self, base_url: str, model: str) -> None:
+        from openai import OpenAI  # imported lazily
+
+        self._client = OpenAI(base_url=base_url, api_key="ollama")
+        self._model = model
+
+    def complete(self, prompt: str, *, system: str | None = None) -> str:
+        resp = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system or "You are a quant strategy analyst."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return resp.choices[0].message.content or ""
+
+
+def _resolve_choice(settings: Settings) -> str:
+    """Pick the provider name from settings, requiring a key for cloud providers.
+
+    Dependency-free (no SDK imports) so it is fully unit-testable. Ollama is
+    local and needs no key; anything unrecognised or unconfigured -> offline.
+    """
+    choice = (settings.llm_provider or "offline").lower()
+    if choice == "claude" and settings.anthropic_api_key:
+        return "claude"
+    if choice == "openai" and settings.openai_api_key:
+        return "openai"
+    if choice == "gemini" and settings.gemini_api_key:
+        return "gemini"
+    if choice == "ollama":
+        return "ollama"
+    return "offline"
+
+
 def get_provider(settings: Settings | None = None) -> LLMProvider:
     """Resolve the configured provider, degrading to offline on any gap."""
     settings = settings or get_settings()
-    choice = (settings.llm_provider or "offline").lower()
+    choice = _resolve_choice(settings)
     try:
-        if choice == "claude" and settings.anthropic_api_key:
+        if choice == "claude":
             return ClaudeProvider(settings.anthropic_api_key, settings.claude_model)
-        if choice == "openai" and settings.openai_api_key:
+        if choice == "openai":
             return OpenAIProvider(settings.openai_api_key, settings.openai_model)
+        if choice == "gemini":
+            return GeminiProvider(settings.gemini_api_key, settings.gemini_model)
+        if choice == "ollama":
+            return OllamaProvider(settings.ollama_base_url, settings.ollama_model)
     except Exception:  # noqa: BLE001 - never let provider init break the app
         return OfflineProvider()
     return OfflineProvider()

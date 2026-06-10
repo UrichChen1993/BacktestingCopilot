@@ -125,7 +125,12 @@ app 已接上引擎：輸入 → 參數驗證 → 回測 → 指標卡 + equity 
 ### 2.4 AI 層：離線 vs 線上
 
 - **離線（預設）**：`.env` 不填金鑰，`get_settings().llm_provider` 走規則式；`recommend_strategy` / `analyze_backtest` 必須能無金鑰產出結果（已有單元測試）。
-- **線上**：填 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY` 並設 `LLM_PROVIDER`。手動驗證：相同輸入下線上報告能產出且不崩、金鑰錯誤/額度耗盡時**自動 fallback 回離線**而非中斷。
+- **provider 選擇邏輯**：`LLM_PROVIDER` 可選 `claude | openai | gemini | ollama | offline`。`_resolve_choice()` 的決策（雲端需金鑰、ollama 免金鑰、其餘 fallback offline）有單元測試 `tests/test_providers.py`；**真實 API 呼叫屬手動整合測試**（下方）。
+- **線上手動驗證**（每個 provider 同套流程）：設 `LLM_PROVIDER` + 對應金鑰 → 跑一次回測 → AI 分析應多出一段 `narrative`。金鑰錯誤/服務不可用時應**自動 fallback 回離線**而非崩潰。
+  - Claude：`ANTHROPIC_API_KEY`、`CLAUDE_MODEL`。
+  - OpenAI：`OPENAI_API_KEY`、`OPENAI_MODEL`。
+  - Gemini：`pip install google-genai`，設 `GEMINI_API_KEY`（或 `GOOGLE_API_KEY`）、`GEMINI_MODEL`。
+  - Ollama（本機，免金鑰）：`ollama serve` + `ollama pull gemma3`，設 `LLM_PROVIDER=ollama`、`OLLAMA_MODEL=<你 pull 的 tag>`，走 OpenAI 相容端點（重用 openai SDK，不需另裝套件）。
   - 鐵則檢查：AI 輸出只是「建議」，仍需再過 `validate_config` 與 `RiskEngine`；AI 不可繞過風控或寫入正式設定（spec §2/§7）。
 
 ---
