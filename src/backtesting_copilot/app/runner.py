@@ -19,6 +19,7 @@ from ..data.yfinance_provider import YFinanceProvider
 from ..models import BacktestResult, StrategyConfig
 from ..reports.exporters import result_to_markdown, trades_to_csv
 from ..risk.engine import RiskEngine
+from ..storage.db import init_db, save_backtest_run
 
 
 @dataclass
@@ -27,6 +28,7 @@ class PipelineOutput:
     report: BacktestReport
     trades_csv: str
     report_md: str
+    strategy_id: str | None = None
 
 
 def build_provider(settings: Settings, *, csv_dir: str | Path | None = None) -> DataProvider:
@@ -55,16 +57,27 @@ def run_backtest(
     engine: BacktestEngine,
     *,
     llm_provider: LLMProvider | None = None,
+    db_path: str | Path | None = None,
 ) -> PipelineOutput:
     """Run the backtest and assemble result + AI report + export payloads.
 
     ``llm_provider`` defaults to the analyst's offline rule-based output.
+    When ``db_path`` is given the run is persisted and its ``strategy_id`` is
+    returned on the output.
     """
     result = engine.run(config)
     report = analyze_backtest(result, provider=llm_provider)
+    strategy_id = None
+    if db_path is not None:
+        conn = init_db(db_path)
+        try:
+            strategy_id = save_backtest_run(conn, config, result, report)
+        finally:
+            conn.close()
     return PipelineOutput(
         result=result,
         report=report,
         trades_csv=trades_to_csv(result.trades),
         report_md=result_to_markdown(result),
+        strategy_id=strategy_id,
     )

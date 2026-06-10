@@ -52,6 +52,7 @@ with st.sidebar:
         interval_days = st.number_input("每期間隔天數", min_value=1, value=14)
 
     market_filter = st.checkbox("啟用大盤 60MA 濾網", value=True)
+    persist = st.checkbox("儲存此次回測到資料庫 (SQLite)", value=False)
     csv_dir = None
     if settings.default_data_source.lower() == "csv":
         csv_dir = st.text_input("CSV 目錄", "data")
@@ -100,10 +101,18 @@ if run:
     st.subheader("回測")
     try:
         engine = build_engine(settings, csv_dir=csv_dir)
-        out = run_backtest(config, engine, llm_provider=get_provider(settings))
+        out = run_backtest(
+            config,
+            engine,
+            llm_provider=get_provider(settings),
+            db_path=settings.db_path if persist else None,
+        )
     except DataUnavailableError as exc:
         st.error(f"資料抓取失敗，未產生任何訊號：{exc}")
         st.stop()
+
+    if out.strategy_id:
+        st.caption(f"已儲存至 `{settings.db_path}`，strategy_id = `{out.strategy_id}`")
 
     r = out.result
     c1, c2, c3, c4 = st.columns(4)
