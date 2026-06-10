@@ -13,6 +13,7 @@ import pytest
 
 from backtesting_copilot.backtest.engine import BacktestEngine
 from backtesting_copilot.data.csv_provider import CsvProvider
+from backtesting_copilot.risk.engine import RiskEngine
 from backtesting_copilot.models import (
     Bar,
     GridParams,
@@ -204,6 +205,38 @@ def test_value_averaging_buys_more_when_price_drops():
     assert result.holding_quantity == 1000
     assert result.remaining_cash == pytest.approx(37500)
     assert result.avg_cost == pytest.approx(62.5)  # (25000 + 37500) / 1000
+
+
+def test_max_cash_usage_blocks_further_va_buys():
+    """Engine computes used_capital from its own state; once it crosses the
+    risk limit, scheduled VA buys stop. VA isolates this from price-position
+    rules (price_lower is None). Limit tightened to 0.5 so the gate lands on
+    a clean period boundary at a flat price."""
+    bars = [_bar(date(2026, 1, 1 + i), 100, 100, 100, 100) for i in range(4)]
+    engine = BacktestEngine(ListProvider(bars), RiskEngine(max_cash_usage_rate=0.5))
+    result = engine.run(_va_config())
+
+    # P1 invest 25000 (used 25%), P2 invest 25000 (used 50%);
+    # P3/P4 start at used>=50% -> MAX_CASH_USAGE vetoes them.
+    assert result.trade_count == 2
+    assert result.holding_quantity == 500
+    assert result.remaining_cash == pytest.approx(50000)
+
+
+def test_max_drawdown_pauses_va_buys():
+    """A >10% equity drawdown (default limit) vetoes the next scheduled buy.
+    Drawdown is engine-computed from the running equity curve."""
+    bars = [
+        _bar(date(2026, 1, 1), 100, 100, 100, 100),  # P1: buy 250 @100, equity 100000 (peak)
+        _bar(date(2026, 1, 2), 55, 55, 55, 55),       # P2: catch-up buy; equity ends 88750
+        _bar(date(2026, 1, 3), 55, 55, 55, 55),       # P3 start dd=-11.25% -> blocked
+    ]
+    result = BacktestEngine(ListProvider(bars)).run(_va_config())
+
+    # only P1 and P2 fill; P3's scheduled buy is paused by the drawdown rule
+    assert result.trade_count == 2
+    assert result.holding_quantity == 909  # 250 + floor(36250/55)=659
+    assert result.mdd <= -0.10
 
 
 # --- end-to-end through the real CsvProvider ------------------------------
