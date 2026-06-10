@@ -108,10 +108,19 @@ Path("trades.csv").write_text(trades_to_csv(result.trades), encoding="utf-8")
 ### 2.3 Streamlit 介面
 
 ```powershell
+pip install -e .                                       # 需先裝 streamlit（在 deps 內）
 streamlit run src/backtesting_copilot/app/streamlit_app.py
 ```
 
-> ⚠️ **已知限制（待修）**：目前 `app/streamlit_app.py` 只做到參數驗證，回測區塊仍顯示「引擎尚待實作」的警告，**尚未接上已完成的 `BacktestEngine`**。要做 UI 端到端測試前，需先把 app 接到引擎（呼叫 `BacktestEngine(provider).run(config)`、顯示 `BacktestResult` 與 equity curve、提供 CSV/MD 下載）。在那之前，UI 測試僅能驗證輸入與驗證流程。
+app 已接上引擎：輸入 → 參數驗證 → 回測 → 指標卡 + equity curve 圖 + AI 分析 + 交易明細 + CSV/MD 下載。實際的編排邏輯抽到 `app/runner.py` 並有單元測試（`tests/test_runner.py`，含 CSV fixture 端到端）；Streamlit 檔本身只負責收輸入與渲染。
+
+**手動 UI 測試重點**：
+- 資料來源 `DEFAULT_DATA_SOURCE=csv` 時側欄會出現「CSV 目錄」欄位，放 `{symbol}.csv` 即可離線跑；`yfinance` 則需連線。
+- 參數驗證未通過時應顯示錯誤與 `suggested_fix` 並停在該步（不進回測）。
+- 抓取失敗（如 yfinance 無資料）應顯示「資料抓取失敗」錯誤而非崩潰。
+- 無金鑰時 AI 分析仍出規則式摘要；有金鑰時多一段 narrative。
+
+> 註：CI 不跑 Streamlit；UI 屬手動冒煙測試。邏輯正確性由 `tests/test_runner.py` 與引擎測試保證。
 
 ### 2.4 AI 層：離線 vs 線上
 
@@ -151,5 +160,5 @@ streamlit run src/backtesting_copilot/app/streamlit_app.py
 ## 4. 已知限制（測試時心裡有數）
 
 - **日 K 近似**：盤中觸價用 `low`/`high` 近似，無法還原當日真實成交順序；同根 bar 先買後賣是刻意的保守假設。
-- **Streamlit 尚未接引擎**（見 §2.3），UI 端到端待補 —— 這是 MVP 收尾前最後一個明顯缺口。
+- **Streamlit 需自行安裝**（`pip install -e .`）；本環境未裝 streamlit，故 UI 僅做過語法/邏輯驗證，未實際啟動畫面渲染——首次執行請手動冒煙一次。
 - 回測不保證未來績效；網格單邊下跌會累積浮虧、價值平均連跌會快速消耗現金。
