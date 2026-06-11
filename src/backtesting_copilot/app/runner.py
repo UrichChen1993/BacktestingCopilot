@@ -6,6 +6,7 @@ out of the UI so it can be unit-tested without a Streamlit runtime.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,35 @@ from ..models import BacktestResult, StrategyConfig
 from ..reports.exporters import result_to_markdown, trades_to_csv
 from ..risk.engine import RiskEngine
 from ..storage.db import init_db, save_backtest_run
+
+
+_LOG_NAMESPACE = "backtesting_copilot"
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s | %(message)s"
+
+
+def setup_logging(
+    log_path: str | Path = "logs/backtest.log", *, level: int = logging.DEBUG
+) -> Path:
+    """Attach a file handler to the package logger; idempotent.
+
+    Writes engine/runner logs to ``log_path`` (created if missing). Safe to call
+    repeatedly — it won't stack duplicate handlers for the same file.
+    """
+    path = Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pkg_logger = logging.getLogger(_LOG_NAMESPACE)
+    pkg_logger.setLevel(level)
+
+    target = str(path.resolve())
+    for handler in pkg_logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == target:
+            return path  # already wired up
+
+    file_handler = logging.FileHandler(path, encoding="utf-8")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    pkg_logger.addHandler(file_handler)
+    return path
 
 
 @dataclass
@@ -65,6 +95,7 @@ def run_backtest(
     When ``db_path`` is given the run is persisted and its ``strategy_id`` is
     returned on the output.
     """
+    setup_logging()
     result = engine.run(config)
     report = analyze_backtest(result, provider=llm_provider)
     strategy_id = None

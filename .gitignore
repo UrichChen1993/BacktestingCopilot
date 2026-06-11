@@ -23,6 +23,10 @@ env/
 data_cache/
 exports/
 
+# Logs
+logs/
+*.log
+
 # Test / coverage
 .pytest_cache/
 .coverage

@@ -7,6 +7,8 @@ on schedule dates at the close, and the RiskEngine vetoes buys each bar.
 
 from __future__ import annotations
 
+import logging
+
 from ..data.provider import DataProvider
 from ..models import (
     BacktestResult,
@@ -20,6 +22,8 @@ from ..risk.engine import RiskEngine
 from ..strategies.grid import generate_grid_levels, should_buy, should_sell
 from ..strategies.value_averaging import build_va_schedule, order_size_for_period
 from .metrics import max_drawdown, total_return, win_rate
+
+logger = logging.getLogger(__name__)
 
 
 class BacktestEngine:
@@ -38,7 +42,13 @@ class BacktestEngine:
 
     def run(self, config: StrategyConfig) -> BacktestResult:
         """Run a single-symbol, single-strategy historical backtest."""
+        logger.info(
+            "run: strategy=%s symbol=%s %s~%s market_filter=%s",
+            config.strategy_type, config.symbol, config.start_date,
+            config.end_date, config.market_filter_enabled,
+        )
         bars = self.data_provider.get_ohlcv(config.symbol, config.start_date, config.end_date)
+        logger.info("run: fetched %d bars for %s", len(bars), config.symbol)
         if config.strategy_type == StrategyType.GRID:
             return self._run_grid(config, bars)
         if config.strategy_type == StrategyType.VALUE_AVERAGING:
@@ -50,9 +60,14 @@ class BacktestEngine:
     def _index_closes(self, config: StrategyConfig) -> list:
         if not config.market_filter_enabled:
             return []
-        return self.data_provider.get_index_closes(
+        closes = self.data_provider.get_index_closes(
             self.market_index_symbol, config.start_date, config.end_date
         )
+        logger.info(
+            "market filter on: loaded %d index bars (%s, ma_window=%d)",
+            len(closes), self.market_index_symbol, self.market_ma_window,
+        )
+        return closes
 
     def _market_signals(self, index_closes: list, day) -> tuple[bool, bool]:
         """(below_ma, slope_down) for the index as of ``day``; (False, False)
@@ -89,6 +104,10 @@ class BacktestEngine:
     def _run_grid(self, config: StrategyConfig, bars: list) -> BacktestResult:
         assert config.grid is not None
         levels = generate_grid_levels(config.grid, config.total_capital)
+        logger.info(
+            "_run_grid start: symbol=%s bars=%d levels=%d capital=%.2f",
+            config.symbol, len(bars), len(levels), config.total_capital,
+        )
         index_closes = self._index_closes(config)
         cash = config.total_capital
         trades: list[Trade] = []
@@ -102,6 +121,12 @@ class BacktestEngine:
             risk = self._evaluate_risk(
                 config, cash=cash, equity_curve=equity_curve, bar=bar,
                 index_closes=index_closes, price_lower=config.grid.price_lower,
+            )
+            logger.debug(
+                "bar %s: O=%.2f H=%.2f L=%.2f C=%.2f cash=%.2f "
+                "allow_buy=%s allow_sell=%s rules=%s",
+                bar.day, bar.open, bar.high, bar.low, bar.close, cash,
+                risk.allow_buy, risk.allow_sell, risk.triggered_rules,
             )
             if "MARKET_60MA_BRAKE" in risk.triggered_rules:
                 market_filter_count += 1
@@ -122,6 +147,10 @@ class BacktestEngine:
                 cash -= cost + fee
                 level.quantity = qty
                 level.status = GridStatus.HOLDING
+                logger.debug(
+                    "BUY  L%d qty=%d @%.2f cost=%.2f fee=%.2f cash=%.2f",
+                    level.level, qty, level.buy_price, cost, fee, cash,
+                )
                 trades.append(
                     Trade(
                         day=bar.day, side=Side.BUY, price=level.buy_price, quantity=qty,
@@ -148,6 +177,10 @@ class BacktestEngine:
                 level.realized_profit += pnl
                 level.quantity = 0
                 level.status = GridStatus.WAIT_BUY
+                logger.debug(
+                    "SELL L%d qty=%d @%.2f proceeds=%.2f pnl=%.2f cash=%.2f",
+                    level.level, qty, level.sell_price, proceeds, pnl, cash,
+                )
                 trades.append(
                     Trade(
                         day=bar.day, side=Side.SELL, price=level.sell_price, quantity=qty,
@@ -161,6 +194,11 @@ class BacktestEngine:
 
         holding_qty = sum(l.quantity for l in levels)
         cost_basis = sum(l.quantity * l.buy_price for l in levels)
+        logger.info(
+            "_run_grid done: trades=%d realized=%.2f cash=%.2f holding_qty=%d "
+            "market_filter_count=%d",
+            len(trades), realized_profit, cash, holding_qty, market_filter_count,
+        )
         return self._build_result(
             config, cash, trades, realized_profit, equity_curve, last_close,
             market_filter_count, holding_qty, cost_basis,
@@ -173,6 +211,10 @@ class BacktestEngine:
         assert va is not None
         schedule = build_va_schedule(va, config.total_capital, config.start_date)
         target_step = config.total_capital / va.total_periods
+        logger.info(
+            "_run_va start: symbol=%s bars=%d periods=%d capital=%.2f",
+            config.symbol, len(bars), len(schedule), config.total_capital,
+        )
         index_closes = self._index_closes(config)
         cash = config.total_capital
         holding_qty = 0
@@ -189,6 +231,12 @@ class BacktestEngine:
             risk = self._evaluate_risk(
                 config, cash=cash, equity_curve=equity_curve, bar=bar,
                 index_closes=index_closes, price_lower=None,
+            )
+            logger.debug(
+                "bar %s: C=%.2f cash=%.2f holding_qty=%d "
+                "allow_buy=%s allow_sell=%s rules=%s",
+                bar.day, bar.close, cash, holding_qty,
+                risk.allow_buy, risk.allow_sell, risk.triggered_rules,
             )
             if "MARKET_60MA_BRAKE" in risk.triggered_rules:
                 market_filter_count += 1
@@ -218,6 +266,10 @@ class BacktestEngine:
                 cash -= cost + fee
                 holding_qty += qty
                 cost_basis += cost
+                logger.debug(
+                    "BUY  P%d qty=%d @%.2f cost=%.2f fee=%.2f cash=%.2f holding_qty=%d",
+                    period.period_index, qty, bar.close, cost, fee, cash, holding_qty,
+                )
                 trades.append(
                     Trade(
                         day=bar.day, side=Side.BUY, price=bar.close, quantity=qty,
@@ -228,6 +280,10 @@ class BacktestEngine:
 
             equity_curve.append((bar.day, cash + holding_qty * bar.close))
 
+        logger.info(
+            "_run_va done: trades=%d cash=%.2f holding_qty=%d market_filter_count=%d",
+            len(trades), cash, holding_qty, market_filter_count,
+        )
         return self._build_result(
             config, cash, trades, realized_profit, equity_curve, last_close,
             market_filter_count, holding_qty, cost_basis,
