@@ -209,3 +209,44 @@ def test_max_rounds_stops():
     out = agent.run(cfg)
 
     assert out.stopped_reason == "max_rounds"
+
+
+def test_e2e_offline(tmp_path):
+    """Full Phase 1 with real engine + CSV fixture; OfflineProvider skips Phase 2."""
+    import shutil
+    import pathlib
+    from backtesting_copilot.data.csv_provider import CsvProvider
+    from backtesting_copilot.backtest.engine import BacktestEngine as RealEngine
+    from backtesting_copilot.risk.engine import RiskEngine
+
+    fixture = pathlib.Path("tests/fixtures/E2E.csv")
+    csv_dir = tmp_path / "data"
+    csv_dir.mkdir()
+    shutil.copy(fixture, csv_dir / "E2E.csv")
+
+    provider_data = CsvProvider(str(csv_dir))
+    risk = RiskEngine()
+    engine = RealEngine(provider_data, risk, market_ma_window=5)
+
+    cfg = OptimizationConfig(
+        strategy_type=StrategyType.GRID,
+        symbol="E2E",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 2),
+        total_capital=100_000.0,
+        search_space={
+            "price_lower": [95.0, 100.0],
+            "price_upper": [110.0, 115.0],
+            "grid_num": [4, 6],
+        },
+        max_rounds=0,
+        top_k=3,
+        market_filter_enabled=False,
+    )
+    agent = OptimizationAgent(engine, OfflineProvider())
+    out = agent.run(cfg)
+
+    assert out.best_params  # non-empty
+    assert isinstance(out.best_score, float)
+    assert len(out.all_rounds) == 8  # 2*2*2 combos
+    assert out.stopped_reason == "max_rounds"

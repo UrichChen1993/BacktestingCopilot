@@ -38,6 +38,7 @@ class OptimizationConfig:
     weight_mdd: float = 0.35
     weight_winrate: float = 0.25
     min_trades: int = 3
+    market_filter_enabled: bool = True
 
 
 @dataclass
@@ -77,6 +78,7 @@ def _params_to_config(opt_cfg: OptimizationConfig, params: dict) -> StrategyConf
             total_capital=opt_cfg.total_capital,
             start_date=opt_cfg.start_date,
             end_date=opt_cfg.end_date,
+            market_filter_enabled=opt_cfg.market_filter_enabled,
             grid=GridParams(
                 price_lower=float(params["price_lower"]),
                 price_upper=float(params["price_upper"]),
@@ -90,6 +92,7 @@ def _params_to_config(opt_cfg: OptimizationConfig, params: dict) -> StrategyConf
         total_capital=opt_cfg.total_capital,
         start_date=opt_cfg.start_date,
         end_date=opt_cfg.end_date,
+        market_filter_enabled=opt_cfg.market_filter_enabled,
         value_averaging=ValueAveragingParams(
             total_periods=int(params["total_periods"]),
             period_interval_days=int(params["interval_days"]),
