@@ -53,3 +53,44 @@ def test_composite_score_min_trades():
     cfg = _make_config()
     result = _make_result(trade_count=2)
     assert composite_score(result, cfg) == -999
+
+
+# append to tests/test_optimizer.py
+from unittest.mock import MagicMock
+from backtesting_copilot.ai.optimizer import OptimizationAgent
+from backtesting_copilot.ai.provider import OfflineProvider
+
+
+def test_phase1_returns_top_k():
+    """Phase 1 sweeps the cartesian product and returns Top-K by score."""
+    cfg = _make_config(
+        search_space={"price_lower": [90.0, 95.0], "price_upper": [110.0, 115.0], "grid_num": [4, 6]},
+        top_k=3,
+        max_rounds=0,  # skip Phase 2
+    )
+
+    call_count = 0
+
+    def fake_run(strategy_config):
+        nonlocal call_count
+        call_count += 1
+        return _make_result(
+            total_return=0.01 * call_count,
+            mdd=-0.05,
+            win_rate=0.5,
+            trade_count=5,
+        )
+
+    engine = MagicMock()
+    engine.run.side_effect = fake_run
+    provider = OfflineProvider()
+
+    agent = OptimizationAgent(engine, provider)
+    out = agent.run(cfg)
+
+    # cartesian: 2 * 2 * 2 = 8 combinations
+    assert engine.run.call_count == 8
+    assert len([r for r in out.all_rounds if r.round_num == 0]) == 8
+    # best has highest score (last call = highest total_return)
+    assert out.best_score > 0
+    assert out.stopped_reason == "max_rounds"
