@@ -7,11 +7,13 @@ out of the UI so it can be unit-tested without a Streamlit runtime.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from ..ai.analyst import BacktestReport, analyze_backtest
+from ..ai.optimizer import OptimizationAgent, OptimizationConfig, OptimizationResult
 from ..ai.provider import LLMProvider
 from ..backtest.engine import BacktestEngine
 from ..config import Settings, get_settings
@@ -121,3 +123,16 @@ def run_backtest(
         report_md=result_to_markdown(result),
         strategy_id=strategy_id,
     )
+
+
+def run_optimization(
+    config: OptimizationConfig,
+    engine: BacktestEngine,
+    provider: LLMProvider,
+    *,
+    on_progress: Callable[[str], None] | None = None,
+) -> OptimizationResult:
+    """Orchestrate OptimizationAgent; thin wrapper kept consistent with run_backtest."""
+    setup_logging()
+    agent = OptimizationAgent(engine, provider)
+    return agent.run(config, on_progress=on_progress)
