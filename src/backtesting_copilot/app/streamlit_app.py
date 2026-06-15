@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from backtesting_copilot.ai.provider import get_provider
-from backtesting_copilot.app.runner import build_engine, run_backtest
+from backtesting_copilot.app.runner import build_engine, build_provider, run_backtest
 from backtesting_copilot.config import get_settings
 from backtesting_copilot.data.provider import DataUnavailableError
 from backtesting_copilot.models import (
@@ -27,6 +27,24 @@ from backtesting_copilot.validator import validate_config
 
 st.set_page_config(page_title="AI 雙軌回測 Copilot", layout="wide")
 settings = get_settings()
+
+
+@st.cache_data(show_spinner=False)
+def _recent_price_range(symbol, start, end, data_source, csv_dir):
+    """Fetch the symbol's high/low over the period for grid-range defaults.
+
+    Cached so typing in other inputs doesn't refetch. Returns ``None`` when
+    data can't be loaded (offline, bad symbol, empty range) so the caller can
+    fall back to static defaults.
+    """
+    try:
+        provider = build_provider(settings, csv_dir=csv_dir)
+        bars = provider.get_ohlcv(symbol, start, end)
+    except Exception:
+        return None
+    if not bars:
+        return None
+    return min(b.low for b in bars), max(b.high for b in bars)
 
 st.title("AI 雙軌資金配置與回測決策系統")
 st.caption("策略由數學規則執行 · 風控由硬規則把關 · AI 負責分析 · 使用者保留最終決策權")
@@ -43,9 +61,25 @@ with st.sidebar:
     start = st.date_input("開始日期", date(2026, 4, 1))
     end = st.date_input("結束日期", date(2026, 5, 31))
 
+    csv_dir = None
+    if settings.default_data_source.lower() == "csv":
+        csv_dir = st.text_input("CSV 目錄", "data")
+
     if strategy_type == StrategyType.GRID.value:
-        price_lower = st.number_input("區間下限", value=100.0)
-        price_upper = st.number_input("區間上限", value=112.0)
+        price_range = _recent_price_range(
+            symbol, start, end, settings.default_data_source, csv_dir
+        )
+        if price_range is not None:
+            lo, hi = price_range
+            st.caption(f"已依 {symbol} {start}~{end} 的近期高低自動帶入區間（{lo:.2f}~{hi:.2f}）")
+        else:
+            lo, hi = 100.0, 112.0
+            st.caption("⚠️ 無法抓取近期價格，已套用預設區間，請自行確認")
+        # Key includes symbol/dates so changing them resets defaults to the
+        # freshly fetched range (Streamlit otherwise keeps the edited value).
+        widget_key = f"{symbol}_{start}_{end}"
+        price_lower = st.number_input("區間下限", value=lo, key=f"grid_lo_{widget_key}")
+        price_upper = st.number_input("區間上限", value=hi, key=f"grid_hi_{widget_key}")
         grid_num = st.number_input("網格層數", min_value=1, max_value=12, value=6)
     else:
         total_periods = st.number_input("總扣款次數", min_value=1, value=4)
@@ -53,9 +87,6 @@ with st.sidebar:
 
     market_filter = st.checkbox("啟用大盤 60MA 濾網", value=True)
     persist = st.checkbox("儲存此次回測到資料庫 (SQLite)", value=False)
-    csv_dir = None
-    if settings.default_data_source.lower() == "csv":
-        csv_dir = st.text_input("CSV 目錄", "data")
 
     run = st.button("驗證並回測", type="primary")
 
@@ -115,6 +146,8 @@ if run:
         st.caption(f"已儲存至 `{settings.db_path}`，strategy_id = `{out.strategy_id}`")
 
     r = out.result
+    for w in r.warnings:
+        st.warning(f"⚠️ {w}")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("總報酬率", f"{r.total_return:.2%}")
     c2.metric("最大回撤 (MDD)", f"{r.mdd:.2%}")

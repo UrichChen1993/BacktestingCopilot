@@ -108,6 +108,20 @@ class BacktestEngine:
             "_run_grid start: symbol=%s bars=%d levels=%d capital=%.2f",
             config.symbol, len(bars), len(levels), config.total_capital,
         )
+        warnings: list[str] = []
+        if bars:
+            data_low = min(b.low for b in bars)
+            data_high = max(b.high for b in bars)
+            band_low = config.grid.price_lower
+            band_high = config.grid.price_upper
+            if band_high < data_low or band_low > data_high:
+                msg = (
+                    f"網格區間 {band_low:.2f}~{band_high:.2f} 與資料價格範圍 "
+                    f"{data_low:.2f}~{data_high:.2f} 完全不重疊，價格永遠不會觸碰格線，"
+                    "本次回測不會有任何成交。請把區間調整到實際股價區間內。"
+                )
+                warnings.append(msg)
+                logger.warning("_run_grid: %s", msg)
         index_closes = self._index_closes(config)
         cash = config.total_capital
         trades: list[Trade] = []
@@ -201,7 +215,7 @@ class BacktestEngine:
         )
         return self._build_result(
             config, cash, trades, realized_profit, equity_curve, last_close,
-            market_filter_count, holding_qty, cost_basis,
+            market_filter_count, holding_qty, cost_basis, warnings=warnings,
         )
 
     # --- value averaging --------------------------------------------------
@@ -293,7 +307,7 @@ class BacktestEngine:
 
     def _build_result(
         self, config, cash, trades, realized_profit, equity_curve, last_close,
-        market_filter_count, holding_qty, cost_basis,
+        market_filter_count, holding_qty, cost_basis, warnings=None,
     ) -> BacktestResult:
         avg_cost = cost_basis / holding_qty if holding_qty else 0.0
         unrealized_profit = holding_qty * last_close - cost_basis
@@ -319,4 +333,5 @@ class BacktestEngine:
             market_filter_count=market_filter_count,
             trades=trades,
             equity_curve=equity_curve,
+            warnings=warnings or [],
         )

@@ -174,3 +174,4 @@ class BacktestResult:
     market_filter_count: int
     trades: list[Trade] = field(default_factory=list)
     equity_curve: list[tuple[date, float]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
