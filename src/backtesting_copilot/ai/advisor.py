@@ -28,12 +28,24 @@ class StrategyRecommendation:
     narrative: str = ""
 
 
+def _grid_confidence(regime_p: float | None) -> str:
+    if regime_p is None:
+        return "MEDIUM"
+    if regime_p >= 0.7:
+        return "HIGH"
+    if regime_p >= 0.5:
+        return "MEDIUM"
+    return "LOW"
+
+
 def recommend_strategy(
     features: PriceFeatures,
     total_capital: float,
     *,
     provider: LLMProvider | None = None,
     market_below_ma: bool = False,
+    classifier=None,  # ml.classifier.RegimeClassifier | None
+    bars=None,        # list[Bar] | None, required when classifier is given
 ) -> StrategyRecommendation:
     provider = provider or OfflineProvider()
     reasons: list[str] = []
@@ -44,12 +56,21 @@ def recommend_strategy(
         slope_pct = features.ma_60_slope / features.ma_60
 
     range_ok = features.range_pct_40 >= MIN_RANGE_PCT_FOR_GRID
-    flat_trend = slope_pct is None or abs(slope_pct) <= RANGE_BOUND_MAX_SLOPE_PCT
 
-    if range_ok and flat_trend:
+    regime_p = None
+    if classifier is not None and bars:
+        regime_p = classifier.predict_proba(bars)
+        grid_suitable = regime_p >= 0.5
+    else:
+        grid_suitable = slope_pct is None or abs(slope_pct) <= RANGE_BOUND_MAX_SLOPE_PCT
+
+    if range_ok and grid_suitable:
         strategy = StrategyType.GRID
-        confidence = "MEDIUM"
-        reasons.append("近 40 日價格呈現區間震盪")
+        confidence = _grid_confidence(regime_p)
+        if regime_p is not None:
+            reasons.append(f"RNN 判定為區間盤（信心 {regime_p:.2f}）")
+        else:
+            reasons.append("近 40 日價格呈現區間震盪")
         reasons.append("波動率足以支撐網格交易")
         suggested = {
             "price_lower": round(features.low_40, 2),
@@ -62,7 +83,10 @@ def recommend_strategy(
     else:
         strategy = StrategyType.VALUE_AVERAGING
         confidence = "MEDIUM" if not range_ok else "LOW"
-        reasons.append("趨勢性較明顯或區間振幅不足，較適合分批布局")
+        if regime_p is not None:
+            reasons.append(f"RNN 判定偏趨勢盤（區間信心 {regime_p:.2f}），較適合分批布局")
+        else:
+            reasons.append("趨勢性較明顯或區間振幅不足，較適合分批布局")
         suggested = {
             "total_periods": 4,
             "period_interval_days": 14,
