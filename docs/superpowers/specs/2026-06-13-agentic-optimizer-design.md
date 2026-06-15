@@ -1,7 +1,7 @@
 # Agentic 自主優化 Agent 設計文件
 
 **日期：** 2026-06-13  
-**狀態：** 草稿（§3 以後待補）
+**狀態：** 完稿
 
 ---
 
@@ -30,6 +30,7 @@ storage/
   db.py                 ← 微擴充：加 save_optimization_run()（為跨 session 預留）
 
 app/
+  runner.py             ← 新增 run_optimization() 包裝
   streamlit_app.py      ← 新增「自動優化」分頁，顯示進度 + 結果表格
 ```
 
@@ -82,28 +83,149 @@ score = (
 
 ## §3 Phase 2 LLM 互動格式
 
-*（待補）*
+**System prompt（固定）：**
+```
+你是量化策略優化 AI，專責建議網格/價值平均策略的參數組合。
+只輸出 JSON 陣列，不得附加任何說明或 markdown。
+```
+
+**User prompt template：**
+```
+## 搜尋範圍
+{search_space_json}
+
+## 已測試 Top-K 結果（依 composite score 降序）
+{top_k_json}
+
+## 歷史輪次摘要（若有）
+{history_json}
+
+## 任務
+根據上述結果，建議 3 組新參數組合（需在搜尋範圍內，且與已測試組合有明顯差異）。
+嚴格輸出 JSON 陣列，例如：
+[{"price_lower": 95.0, "price_upper": 115.0, "grid_num": 8}, ...]
+```
+
+**回應解析：**
+- 成功：`json.loads()` → `list[dict]`，每個 dict 做數值 clamp 到搜尋範圍邊界
+- 失敗（非 JSON / schema 不符）：log warning，該輪視為「無新建議」，觸發收斂判定
 
 ---
 
 ## §4 OptimizationAgent 介面設計
 
-*（待補）*
+```python
+@dataclass
+class OptimizationConfig:
+    strategy_type: StrategyType
+    symbol: str
+    start_date: date
+    end_date: date
+    total_capital: float
+    search_space: dict          # {"price_lower": [90,95,100,...], "grid_num": [4,6,8]}
+    top_k: int = 5
+    max_rounds: int = 5
+    converge_threshold: float = 0.001  # score 進步小於此值算「無改善」
+    patience: int = 2                   # 連續無改善幾次測試就停止
+    weight_return: float = 0.40
+    weight_mdd: float = 0.35
+    weight_winrate: float = 0.25
+    min_trades: int = 3
+
+@dataclass
+class RoundRecord:
+    round_num: int      # 0 = Phase 1
+    params: dict
+    score: float
+    result: BacktestResult
+
+@dataclass
+class OptimizationResult:
+    best_params: dict
+    best_score: float
+    best_result: BacktestResult
+    all_rounds: list[RoundRecord]
+    stopped_reason: str  # "max_rounds" | "converged" | "no_new_suggestions"
+
+class OptimizationAgent:
+    def __init__(
+        self,
+        engine: BacktestEngine,
+        provider: LLMProvider,
+        history: list[dict] | None = None,
+    ) -> None: ...
+
+    def run(
+        self,
+        config: OptimizationConfig,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> OptimizationResult: ...
+```
+
+`on_progress(msg)` 由 Streamlit 用 `st.empty().write(msg)` 接收即時進度。
 
 ---
 
 ## §5 收斂判定邏輯
 
-*（待補）*
+```
+no_improve_count = 0
+best_score = Phase1 最佳分數
+
+for round in range(max_rounds):
+    suggestions = LLM 建議（3 組）
+    if 解析失敗 or 沒有新組合:
+        stopped_reason = "no_new_suggestions"; break
+
+    for params in suggestions:
+        score = 回測 + composite_score
+        if score > best_score + converge_threshold:
+            best_score = score
+            no_improve_count = 0
+        else:
+            no_improve_count += 1
+
+    if no_improve_count >= patience:
+        stopped_reason = "converged"; break
+else:
+    stopped_reason = "max_rounds"
+```
+
+**注意：** `no_improve_count` 按「單次測試」而非「整輪」累加，patience=2 代表連續 2 次測試都無改善即停。
 
 ---
 
 ## §6 Streamlit UI 整合
 
-*（待補）*
+現有頁面以 `st.tabs(["回測", "自動優化"])` 切分。
+
+**「自動優化」頁：**
+1. **搜尋範圍輸入**（依 strategy_type 切換）：
+   - Grid：`price_lower_min/max`、`price_upper_min/max`、`grid_num` multiselect（候選值 [4,6,8,10]）
+   - VA：`total_periods` range、`interval_days` range
+2. `max_rounds` slider（1–10，預設 5）
+3. "啟動優化" 按鈕 → `runner.run_optimization(on_progress=...)`
+4. **進度顯示**：`st.empty()` 逐筆更新，顯示「第 N 輪 / 已測 M 組 / 目前最佳 {score:.4f}」
+5. **結果表格**：`st.dataframe` 顯示所有 `RoundRecord`（來源輪次、參數、score、total_return、mdd、win_rate），按 score 降序，第一列高亮
+6. "套用此參數" 按鈕：把選取列的參數寫入 `st.session_state`，切換到回測頁自動填入
+
+UI 層不直接呼叫引擎；由 `app/runner.py` 新增 `run_optimization(config, engine, provider, on_progress)` 包裝，保持薄殼原則。
 
 ---
 
 ## §7 測試策略
 
-*（待補）*
+檔案：`tests/test_optimizer.py`
+
+| 測試 | 方式 | 驗證點 |
+|---|---|---|
+| `test_composite_score_weights` | 純算術 | 已知數值算出預期 score |
+| `test_composite_score_min_trades` | 純算術 | trade_count < 3 → -999 |
+| `test_phase1_returns_top_k` | mock engine（回傳固定 result）| Top-K 按 score 降序，長度 = K |
+| `test_phase2_llm_parsed` | FakeProvider 回傳合法 JSON | 正確解析並跑回測 |
+| `test_phase2_llm_parse_fail` | FakeProvider 回傳亂碼 | stopped_reason = "no_new_suggestions"，不 raise |
+| `test_convergence_stops` | mock engine 回傳固定 score | patience 輪後 stopped_reason = "converged" |
+| `test_max_rounds_stops` | mock engine 每輪小幅提升 | stopped_reason = "max_rounds" |
+| `test_e2e_offline` | CsvProvider fixture + OfflineProvider + 真實引擎 | Phase1 完成，best_params 非空，OptimizationResult 合法 |
+
+**不測 Streamlit 層**（依既有慣例）；只測 `runner.run_optimization()` 的邏輯分支，覆蓋 provider 分支 + on_progress 回調有被呼叫。
