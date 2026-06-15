@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from ..ai.analyst import BacktestReport, analyze_backtest
@@ -45,7 +46,15 @@ def setup_logging(
         if isinstance(handler, logging.FileHandler) and handler.baseFilename == target:
             return path  # already wired up
 
-    file_handler = logging.FileHandler(path, encoding="utf-8")
+    # Roll over at local midnight so each day lands in its own file
+    # (e.g. backtest.log.2026-06-15). Keep 30 days of history.
+    file_handler = TimedRotatingFileHandler(
+        path,
+        when="midnight",
+        backupCount=30,
+        encoding="utf-8",
+    )
+    file_handler.suffix = "%Y-%m-%d"
     file_handler.setLevel(level)
     file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
     pkg_logger.addHandler(file_handler)
