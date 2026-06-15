@@ -94,3 +94,118 @@ def test_phase1_returns_top_k():
     # best has highest score (last call = highest total_return)
     assert out.best_score > 0
     assert out.stopped_reason == "max_rounds"
+
+
+# append to tests/test_optimizer.py
+import json as _json
+
+
+class _FakeProvider:
+    """Returns a fixed JSON string as LLM output."""
+    name = "fake"
+
+    def __init__(self, response: str) -> None:
+        self._response = response
+
+    def complete(self, prompt: str, *, system: str | None = None) -> str:
+        return self._response
+
+
+def test_phase2_llm_parsed():
+    """Phase 2 parses valid LLM JSON and runs the suggested params."""
+    suggestions = [
+        {"price_lower": 92.0, "price_upper": 112.0, "grid_num": 6},
+        {"price_lower": 93.0, "price_upper": 113.0, "grid_num": 8},
+        {"price_lower": 91.0, "price_upper": 111.0, "grid_num": 4},
+    ]
+    provider = _FakeProvider(_json.dumps(suggestions))
+    cfg = _make_config(
+        search_space={"price_lower": [90.0], "price_upper": [110.0], "grid_num": [6]},
+        max_rounds=1,
+        patience=10,  # don't converge early
+    )
+    engine = MagicMock()
+    engine.run.return_value = _make_result(total_return=0.05, mdd=-0.10, win_rate=0.6, trade_count=5)
+
+    agent = OptimizationAgent(engine, provider)
+    out = agent.run(cfg)
+
+    # Phase1: 1 call; Phase2 round1: 3 calls => total 4
+    assert engine.run.call_count == 4
+    # All round-1 records present
+    phase2_records = [r for r in out.all_rounds if r.round_num == 1]
+    assert len(phase2_records) == 3
+
+
+def test_phase2_llm_parse_fail():
+    """Phase 2 handles a non-JSON LLM response gracefully."""
+    provider = _FakeProvider("this is not json at all")
+    cfg = _make_config(
+        search_space={"price_lower": [90.0], "price_upper": [110.0], "grid_num": [6]},
+        max_rounds=3,
+    )
+    engine = MagicMock()
+    engine.run.return_value = _make_result(total_return=0.05, mdd=-0.10, win_rate=0.6, trade_count=5)
+
+    agent = OptimizationAgent(engine, provider)
+    out = agent.run(cfg)
+
+    assert out.stopped_reason == "no_new_suggestions"
+    # Only Phase 1 ran (1 combo)
+    assert engine.run.call_count == 1
+
+
+def test_convergence_stops():
+    """stopped_reason == 'converged' when patience consecutive tests don't improve."""
+    suggestions = [
+        {"price_lower": 92.0, "price_upper": 112.0, "grid_num": 6},
+        {"price_lower": 93.0, "price_upper": 113.0, "grid_num": 8},
+        {"price_lower": 91.0, "price_upper": 111.0, "grid_num": 4},
+    ]
+    provider = _FakeProvider(_json.dumps(suggestions))
+    cfg = _make_config(
+        search_space={"price_lower": [90.0], "price_upper": [110.0], "grid_num": [6]},
+        max_rounds=5,
+        patience=2,
+        converge_threshold=0.001,
+    )
+    # Always return the same score — no improvement
+    engine = MagicMock()
+    engine.run.return_value = _make_result(total_return=0.05, mdd=-0.10, win_rate=0.6, trade_count=5)
+
+    agent = OptimizationAgent(engine, provider)
+    out = agent.run(cfg)
+
+    assert out.stopped_reason == "converged"
+
+
+def test_max_rounds_stops():
+    """stopped_reason == 'max_rounds' when score keeps improving within patience."""
+    call_count = [0]
+    suggestions = [
+        {"price_lower": 92.0, "price_upper": 112.0, "grid_num": 6},
+    ]
+    provider = _FakeProvider(_json.dumps(suggestions))
+    cfg = _make_config(
+        search_space={"price_lower": [90.0], "price_upper": [110.0], "grid_num": [6]},
+        max_rounds=3,
+        patience=10,
+        converge_threshold=0.001,
+    )
+
+    def always_improving(_strategy_config):
+        call_count[0] += 1
+        return _make_result(
+            total_return=0.01 * call_count[0],
+            mdd=-0.05,
+            win_rate=0.5,
+            trade_count=5,
+        )
+
+    engine = MagicMock()
+    engine.run.side_effect = always_improving
+
+    agent = OptimizationAgent(engine, provider)
+    out = agent.run(cfg)
+
+    assert out.stopped_reason == "max_rounds"
