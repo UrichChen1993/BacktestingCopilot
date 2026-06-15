@@ -2,6 +2,9 @@
 
 Keeps secrets out of code (PRD §9.4). Missing LLM keys degrade to the
 offline provider rather than failing.
+
+學習重點：設定集中在一個檔案，其他模組只拿 Settings 物件，
+不用到處直接讀環境變數。
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ except Exception:  # pragma: no cover - dotenv is best-effort
 
 @dataclass(frozen=True)
 class Settings:
+    # dataclass 欄位的預設值會在建立 Settings() 時被帶入。
+    # os.getenv("NAME", "default") 表示：環境變數不存在時用第二個值。
     llm_provider: str = os.getenv("LLM_PROVIDER", "offline")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
@@ -41,4 +46,5 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    # 用函式包一層，未來如果要加快取、驗證或測試替身，呼叫端不用改。
     return Settings()

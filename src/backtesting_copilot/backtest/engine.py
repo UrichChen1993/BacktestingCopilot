@@ -49,6 +49,7 @@ class BacktestEngine:
         )
         bars = self.data_provider.get_ohlcv(config.symbol, config.start_date, config.end_date)
         logger.info("run: fetched %d bars for %s", len(bars), config.symbol)
+        # 依策略類型分派到不同私有方法；外部只需要呼叫 run(config)。
         if config.strategy_type == StrategyType.GRID:
             return self._run_grid(config, bars)
         if config.strategy_type == StrategyType.VALUE_AVERAGING:
@@ -60,6 +61,7 @@ class BacktestEngine:
     def _index_closes(self, config: StrategyConfig) -> list:
         if not config.market_filter_enabled:
             return []
+        # 大盤資料只服務風控，不參與個股策略本身。
         closes = self.data_provider.get_index_closes(
             self.market_index_symbol, config.start_date, config.end_date
         )
@@ -86,6 +88,7 @@ class BacktestEngine:
 
     def _evaluate_risk(self, config, *, cash, equity_curve, bar, index_closes, price_lower):
         below_ma, slope_down = self._market_signals(index_closes, bar.day)
+        # peak/current_equity 用來即時計算目前回撤，再交給 RiskEngine 判斷。
         peak = max((v for _, v in equity_curve), default=config.total_capital)
         current_equity = equity_curve[-1][1] if equity_curve else config.total_capital
         current_drawdown = current_equity / peak - 1.0 if peak > 0 else 0.0
@@ -131,6 +134,7 @@ class BacktestEngine:
         market_filter_count = 0
 
         for bar in bars:
+            # 回測的核心是「逐根 K 棒模擬時間前進」。
             last_close = bar.close
             risk = self._evaluate_risk(
                 config, cash=cash, equity_curve=equity_curve, bar=bar,
@@ -151,6 +155,7 @@ class BacktestEngine:
                     break
                 if not should_buy(level, day_low=bar.low):
                     continue
+                # 用該格分配到的資金除以買入價，得到可買整股數量。
                 qty = int(level.unit_capital // level.buy_price)
                 if qty <= 0:
                     continue
@@ -185,6 +190,7 @@ class BacktestEngine:
                 tax = proceeds * config.tax_rate
                 buy_cost = qty * level.buy_price
                 buy_fee = buy_cost * config.fee_rate
+                # 賣出損益 = 賣出收入 - 賣出成本 - 原始買入成本 - 買入手續費。
                 pnl = proceeds - fee - tax - buy_cost - buy_fee
                 cash += proceeds - fee - tax
                 realized_profit += pnl
@@ -204,6 +210,7 @@ class BacktestEngine:
                 )
 
             holding_value = sum(l.quantity * bar.close for l in levels)
+            # equity_curve 是每天的帳戶總價值，後續用來算 MDD。
             equity_curve.append((bar.day, cash + holding_value))
 
         holding_qty = sum(l.quantity for l in levels)
@@ -241,6 +248,7 @@ class BacktestEngine:
         next_period = 0
 
         for bar in bars:
+            # VA 策略同樣逐日走，但只有日期到達排程時才下單。
             last_close = bar.close
             risk = self._evaluate_risk(
                 config, cash=cash, equity_curve=equity_curve, bar=bar,
@@ -260,6 +268,7 @@ class BacktestEngine:
                 period = schedule[next_period]
                 next_period += 1
                 current_value = holding_qty * bar.close
+                # order_size_for_period 回傳本期應投入現金；0 表示本期不買。
                 amount = order_size_for_period(
                     target_value=period.target_value,
                     current_value=current_value,
@@ -309,6 +318,7 @@ class BacktestEngine:
         self, config, cash, trades, realized_profit, equity_curve, last_close,
         market_filter_count, holding_qty, cost_basis, warnings=None,
     ) -> BacktestResult:
+        # 把回測內部狀態統一整理成 BacktestResult，避免每個策略各自組結果。
         avg_cost = cost_basis / holding_qty if holding_qty else 0.0
         unrealized_profit = holding_qty * last_close - cost_basis
         final_value = cash + holding_qty * last_close

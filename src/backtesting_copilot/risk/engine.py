@@ -43,19 +43,23 @@ class RiskEngine:
         """
         check = RiskCheck(allow_buy=True, allow_sell=True)
 
+        # MARKET_60MA_BRAKE — 大盤指數低於 60MA 且 MA 向下斜，封鎖買入（整體市場太弱）
         if self.market_filter_enabled and market_below_ma and market_ma_slope_down:
             check.allow_buy = False
             check.triggered_rules.append("MARKET_60MA_BRAKE")
             check.new_status = StrategyStatus.PAUSED_BY_MARKET
 
+        # BELOW_PRICE_LOWER — 當前價格低於策略下限（price_lower），停止網格補倉
         if price_lower is not None and current_price < price_lower:
             check.allow_buy = False
             check.triggered_rules.append("BELOW_PRICE_LOWER")
 
+        # MAX_CASH_USAGE — 已用資金 / 總資金 ≥ 90%，資金不足，停止買入
         if total_capital > 0 and used_capital / total_capital >= self.max_cash_usage_rate:
             check.allow_buy = False
             check.triggered_rules.append("MAX_CASH_USAGE")
 
+        # MAX_DRAWDOWN — 當前回撤 ≤ -10%，風險過高，封鎖買入並暫停策略（需人工確認是否繼續）
         if current_drawdown <= self.max_drawdown_limit:
             check.allow_buy = False
             check.triggered_rules.append("MAX_DRAWDOWN")

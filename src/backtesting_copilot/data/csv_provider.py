@@ -20,15 +20,22 @@ _REQUIRED_COLUMNS = {"date", "open", "high", "low", "close", "volume"}
 def _load(path: Path, start: date, end: date) -> list[Bar]:
     if not path.exists():
         raise DataUnavailableError(f"CSV not found: {path}")
+
+    # pandas 負責讀表格；後面再把每列轉成專案自己的 Bar dataclass。
     df = pd.read_csv(path)
     df.columns = [c.strip().lower() for c in df.columns]
+
+    # 用 set 差集找缺欄位，比一個一個 if 更精簡。
     missing = _REQUIRED_COLUMNS - set(df.columns)
     if missing:
         raise DataUnavailableError(f"CSV {path} missing columns: {sorted(missing)}")
+
     df["date"] = pd.to_datetime(df["date"]).dt.date
     df = df[(df["date"] >= start) & (df["date"] <= end)].sort_values("date")
     if df.empty:
         raise DataUnavailableError(f"No rows in {path} within {start}..{end}")
+
+    # list comprehension：把 DataFrame 每一列映射成 Bar 物件。
     return [
         Bar(
             day=row.date,
@@ -49,6 +56,7 @@ class CsvProvider:
         self.data_dir = Path(data_dir)
 
     def _path(self, symbol: str) -> Path:
+        # Path 物件支援 / 運算子來組路徑，比手動串字串安全。
         return self.data_dir / f"{symbol}.csv"
 
     def get_ohlcv(self, symbol: str, start: date, end: date) -> list[Bar]:

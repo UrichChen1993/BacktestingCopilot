@@ -72,6 +72,8 @@ class PipelineOutput:
 
 def build_provider(settings: Settings, *, csv_dir: str | Path | None = None) -> DataProvider:
     """yfinance is the online default; CSV is the offline/reproducible source."""
+    # 這裡回傳的是符合 DataProvider Protocol 的物件。
+    # 呼叫端不用知道背後是 CSV 還是 yfinance，這就是依賴反轉的好處。
     if settings.default_data_source.lower() == "csv":
         return CsvProvider(csv_dir or "data")
     return YFinanceProvider()
@@ -79,6 +81,7 @@ def build_provider(settings: Settings, *, csv_dir: str | Path | None = None) -> 
 
 def build_engine(settings: Settings, *, csv_dir: str | Path | None = None) -> BacktestEngine:
     provider = build_provider(settings, csv_dir=csv_dir)
+    # RiskEngine 把風控門檻集中管理，BacktestEngine 只負責在每根 K 棒呼叫它。
     risk = RiskEngine(
         max_cash_usage_rate=settings.max_cash_usage_rate,
         max_drawdown_limit=settings.max_drawdown_limit,
@@ -105,6 +108,7 @@ def run_backtest(
     returned on the output.
     """
     setup_logging()
+    # 主流程順序：跑回測 -> 產生分析 -> 可選擇寫入 DB -> 組匯出字串。
     result = engine.run(config)
     report = analyze_backtest(result, provider=llm_provider)
     strategy_id = None

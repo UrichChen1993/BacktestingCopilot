@@ -1,4 +1,8 @@
-"""Grid trading: node generation and per-bar trigger rules (PRD §5.1)."""
+"""Grid trading: node generation and per-bar trigger rules (PRD §5.1).
+
+這個檔案是「純策略公式」：只計算格線與買賣條件，不碰資料來源、
+資金帳本或風控。這種切法讓函式容易測試。
+"""
 
 from __future__ import annotations
 
@@ -21,6 +25,7 @@ def generate_grid_levels(params: GridParams, total_capital: float) -> list[GridL
     unit_capital = total_capital / params.grid_num
     levels: list[GridLevel] = []
     for i in range(params.grid_num):
+        # range 從 0 開始，所以對外顯示的 level 用 i + 1。
         buy_price = params.price_lower + i * space
         sell_price = buy_price + space
         levels.append(
@@ -36,6 +41,7 @@ def generate_grid_levels(params: GridParams, total_capital: float) -> list[GridL
 
 def should_buy(level: GridLevel, day_low: float) -> bool:
     """Buy when the bar's low touches/crosses the node and it's waiting (PRD §5.1.5)."""
+    # 條件拆成小函式，回測引擎讀起來就像英文句子：if should_buy(...)
     return level.status == GridStatus.WAIT_BUY and day_low <= level.buy_price
 
 

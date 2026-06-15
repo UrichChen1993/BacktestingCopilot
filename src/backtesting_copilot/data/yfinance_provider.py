@@ -14,11 +14,12 @@ from .provider import DataUnavailableError
 
 def _fetch(symbol: str, start: date, end: date) -> list[Bar]:
     try:
+        # 延遲 import：只有真的使用 yfinance provider 時才需要這個套件。
         import yfinance as yf
     except ImportError as exc:  # pragma: no cover - dependency guard
         raise DataUnavailableError("yfinance not installed") from exc
 
-    # yfinance end is exclusive; pad by a day to include `end`.
+    # yfinance 的 end 是「不包含」結束日，所以多加一天才會含 end 當天。
     try:
         df = yf.download(
             symbol,
@@ -33,12 +34,14 @@ def _fetch(symbol: str, start: date, end: date) -> list[Bar]:
     if df is None or df.empty:
         raise DataUnavailableError(f"yfinance returned no data for {symbol}")
 
-    # Flatten possible MultiIndex columns (single-ticker downloads).
+    # yfinance 有時會回傳多層欄位；單一 ticker 只需要第一層欄名。
     if hasattr(df.columns, "nlevels") and df.columns.nlevels > 1:
         df.columns = df.columns.get_level_values(0)
 
     bars: list[Bar] = []
     for idx, row in df.iterrows():
+        # 外部套件的資料格式進來後，立刻轉成內部 Bar 模型；
+        # 後面的策略/風控就不用知道 yfinance 的欄位細節。
         bars.append(
             Bar(
                 day=idx.date(),

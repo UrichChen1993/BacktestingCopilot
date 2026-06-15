@@ -6,6 +6,7 @@ from ..models import Side, Trade
 
 
 def total_return(initial_capital: float, final_value: float) -> float:
+    # 防禦式檢查：本金小於等於 0 時，報酬率公式沒有意義。
     if initial_capital <= 0:
         raise ValueError("initial_capital must be positive")
     return final_value / initial_capital - 1.0
@@ -18,8 +19,10 @@ def max_drawdown(equity_curve: list[float]) -> float:
     peak = equity_curve[0]
     mdd = 0.0
     for value in equity_curve:
+        # peak 記錄目前看過的歷史最高淨值。
         peak = max(peak, value)
         if peak > 0:
+            # value / peak - 1 是從高點跌下來的比例；mdd 保留最糟的一次。
             mdd = min(mdd, value / peak - 1.0)
     return mdd
 

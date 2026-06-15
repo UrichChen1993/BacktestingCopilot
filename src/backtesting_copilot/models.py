@@ -2,6 +2,9 @@
 
 These mirror the PRD data structures (§5, §8, §10) and form the typed
 contract between the strategy, risk, backtest, AI, and storage layers.
+
+學 Python 時可以先讀這個檔案：它只定義「資料長什麼樣子」，
+不做計算。這種檔案通常是理解專案名詞的入口。
 """
 
 from __future__ import annotations
@@ -12,7 +15,10 @@ from enum import Enum
 
 
 class StrategyType(str, Enum):
-    """Which of the two strategy modules a config drives."""
+    """Which of the two strategy modules a config drives.
+
+    Enum 適合表示固定選項；繼承 str 代表它也能自然地序列化成字串。
+    """
 
     GRID = "GRID"
     VALUE_AVERAGING = "VALUE_AVERAGING"
@@ -75,6 +81,8 @@ class GridParams:
 
     @property
     def grid_space(self) -> float:
+        # @property 讓呼叫端可以寫 params.grid_space，
+        # 看起來像屬性，但實際上會即時計算。
         return (self.price_upper - self.price_lower) / self.grid_num
 
 
@@ -90,7 +98,11 @@ class ValueAveragingParams:
 
 @dataclass(frozen=True)
 class StrategyConfig:
-    """A fully specified strategy ready for validation/backtest (PRD §10.1)."""
+    """A fully specified strategy ready for validation/backtest (PRD §10.1).
+
+    dataclass 會自動產生 __init__，所以這裡只需要列欄位。
+    ``grid`` 和 ``value_averaging`` 是二選一的策略參數。
+    """
 
     symbol: str
     strategy_type: StrategyType
@@ -153,7 +165,11 @@ class ValidationResult:
 
 @dataclass
 class BacktestResult:
-    """Aggregated backtest output metrics (PRD §6.3)."""
+    """Aggregated backtest output metrics (PRD §6.3).
+
+    field(default_factory=list) 避免多個物件共用同一個預設 list。
+    這是 Python dataclass 很重要的小陷阱。
+    """
 
     strategy_type: StrategyType
     symbol: str
