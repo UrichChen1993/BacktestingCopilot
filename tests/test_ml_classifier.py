@@ -39,3 +39,13 @@ def test_maybe_load_disabled_returns_none(monkeypatch, tmp_path):
 def test_maybe_load_missing_artifact_returns_none(monkeypatch, tmp_path):
     monkeypatch.setenv("USE_RNN_REGIME", "1")
     assert maybe_load_classifier(artifacts_dir=tmp_path) is None
+
+
+def test_maybe_load_no_torch_returns_none(monkeypatch, tmp_path):
+    import sys
+    monkeypatch.setenv("USE_RNN_REGIME", "1")
+    # create a fake model file so the path check passes
+    (tmp_path / "regime_lstm.pt").write_bytes(b"fake")
+    # Force the inner `from .model import TORCH_AVAILABLE` to fail
+    monkeypatch.setitem(sys.modules, "backtesting_copilot.ml.model", None)
+    assert maybe_load_classifier(artifacts_dir=tmp_path) is None
