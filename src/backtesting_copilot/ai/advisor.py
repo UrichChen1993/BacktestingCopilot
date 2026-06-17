@@ -57,6 +57,9 @@ def recommend_strategy(
 
     range_ok = features.range_pct_40 >= MIN_RANGE_PCT_FOR_GRID
 
+    if classifier is not None and not bars:
+        raise ValueError("bars must be provided when classifier is given")
+
     regime_p = None
     if classifier is not None and bars:
         regime_p = classifier.predict_proba(bars)
