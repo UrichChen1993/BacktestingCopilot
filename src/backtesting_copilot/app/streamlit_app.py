@@ -13,10 +13,12 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from backtesting_copilot.ai.provider import get_provider
+from backtesting_copilot.ai.advisor import recommend_strategy
+from backtesting_copilot.ai.provider import OllamaProvider, OfflineProvider, get_provider
 from backtesting_copilot.app.runner import build_engine, build_provider, run_backtest
-from backtesting_copilot.config import get_settings
+from backtesting_copilot.config import Settings, get_settings
 from backtesting_copilot.data.provider import DataUnavailableError
+from backtesting_copilot.features.price_features import PriceFeatures
 from backtesting_copilot.models import (
     GridParams,
     StrategyConfig,
@@ -31,12 +33,6 @@ settings = get_settings()
 
 @st.cache_data(show_spinner=False)
 def _recent_price_range(symbol, start, end, data_source, csv_dir):
-    """Fetch the symbol's high/low over the period for grid-range defaults.
-
-    Cached so typing in other inputs doesn't refetch. Returns ``None`` when
-    data can't be loaded (offline, bad symbol, empty range) so the caller can
-    fall back to static defaults.
-    """
     try:
         provider = build_provider(settings, csv_dir=csv_dir)
         bars = provider.get_ohlcv(symbol, start, end)
@@ -46,12 +42,79 @@ def _recent_price_range(symbol, start, end, data_source, csv_dir):
         return None
     return min(b.low for b in bars), max(b.high for b in bars)
 
+
+@st.cache_data(show_spinner=False)
+def _fetch_bars(symbol, start, end, csv_dir):
+    try:
+        provider = build_provider(settings, csv_dir=csv_dir)
+        return provider.get_ohlcv(symbol, start, end)
+    except Exception:
+        return None
+
+
 st.title("AI 雙軌資金配置與回測決策系統")
 st.caption("策略由數學規則執行 · 風控由硬規則把關 · AI 負責分析 · 使用者保留最終決策權")
-st.info(
-    f"LLM provider：**{settings.llm_provider}**（無金鑰時自動離線運行）　|　"
-    f"資料來源：**{settings.default_data_source}**"
-)
+
+# --- Sidebar: LLM 設定區 ---
+with st.sidebar:
+    st.header("LLM 設定")
+    _llm_choice = st.selectbox(
+        "LLM Provider",
+        ["offline", "ollama", "claude", "openai", "gemini"],
+        index=["offline", "ollama", "claude", "openai", "gemini"].index(
+            settings.llm_provider if settings.llm_provider in ["offline", "ollama", "claude", "openai", "gemini"] else "offline"
+        ),
+        help="選 ollama 可指向另一台機器的 Ollama 服務"
+    )
+    _ollama_url = settings.ollama_base_url
+    _ollama_model = settings.ollama_model
+    if _llm_choice == "ollama":
+        _ollama_url = st.text_input(
+            "Ollama 位址",
+            value=settings.ollama_base_url,
+            help="另一台電腦上的 Ollama：改成 http://<IP>:11434/v1",
+        )
+        _ollama_model = st.text_input("Ollama 模型", value=settings.ollama_model)
+
+    if _llm_choice != settings.llm_provider or (
+        _llm_choice == "ollama" and (
+            _ollama_url != settings.ollama_base_url or _ollama_model != settings.ollama_model
+        )
+    ):
+        import os
+        _overridden_settings = Settings(
+            llm_provider=_llm_choice,
+            anthropic_api_key=settings.anthropic_api_key,
+            claude_model=settings.claude_model,
+            openai_api_key=settings.openai_api_key,
+            openai_model=settings.openai_model,
+            gemini_api_key=settings.gemini_api_key,
+            gemini_model=settings.gemini_model,
+            ollama_base_url=_ollama_url,
+            ollama_model=_ollama_model,
+            default_data_source=settings.default_data_source,
+            market_index_symbol=settings.market_index_symbol,
+            db_path=settings.db_path,
+            max_cash_usage_rate=settings.max_cash_usage_rate,
+            max_drawdown_limit=settings.max_drawdown_limit,
+            market_ma_window=settings.market_ma_window,
+        )
+        _active_provider = get_provider(_overridden_settings)
+    else:
+        _active_provider = get_provider(settings)
+
+_is_offline = isinstance(_active_provider, OfflineProvider)
+
+if _is_offline:
+    st.warning(
+        "⚠️ **目前為離線（規則）模式**：AI 敘述功能停用。\n\n"
+        "若 Ollama 在另一台電腦，在左側「LLM 設定」選 **ollama** 並填入該機器 IP，"
+        "例如 `http://192.168.1.100:11434/v1`。"
+    )
+else:
+    _provider_label = getattr(_active_provider, "name", "?")
+    _extra = f"（{_ollama_url} / {_ollama_model}）" if _llm_choice == "ollama" else ""
+    st.success(f"✅ AI 已啟用：**{_provider_label}**{_extra}　|　資料來源：**{settings.default_data_source}**")
 
 with st.sidebar:
     st.header("策略輸入")
@@ -116,7 +179,10 @@ def _build_config() -> StrategyConfig:
 
 def _render_optimizer_tab() -> None:
     st.subheader("自動優化")
-    st.caption("Phase 1 全搜尋 + Phase 2 LLM 精細搜尋，自動找出最佳參數組合")
+    if _is_offline:
+        st.caption("Phase 1 全搜尋（規則模式）。設定 LLM API key 後可啟用 Phase 2 LLM 精細搜尋。")
+    else:
+        st.caption("Phase 1 全搜尋 + Phase 2 LLM 精細搜尋，自動找出最佳參數組合")
 
     opt_strategy = st.selectbox("策略（優化）", [s.value for s in StrategyType], key="opt_strategy")
     opt_symbol = st.text_input("標的（優化）", symbol, key="opt_symbol")
@@ -173,7 +239,7 @@ def _render_optimizer_tab() -> None:
         )
         _csv_dir = csv_dir if settings.default_data_source.lower() == "csv" else None
         engine = build_engine(settings, csv_dir=_csv_dir)
-        provider = get_provider(settings)
+        provider = _active_provider
 
         progress_placeholder = st.empty()
         results_placeholder = st.empty()
@@ -190,11 +256,14 @@ def _render_optimizer_tab() -> None:
 
         rows = []
         for r in out.all_rounds:
-            row = {"輪次": r.round_num, "score": round(r.score, 4),
-                   "報酬率": f"{r.result.total_return:.2%}",
-                   "MDD": f"{r.result.mdd:.2%}",
-                   "勝率": f"{r.result.win_rate:.0%}",
-                   "交易數": r.result.trade_count}
+            row = {
+                "來源": "Phase 1 全搜尋" if r.round_num == 0 else f"🤖 Phase 2 LLM 輪次 {r.round_num}",
+                "score": round(r.score, 4),
+                "報酬率": f"{r.result.total_return:.2%}",
+                "MDD": f"{r.result.mdd:.2%}",
+                "勝率": f"{r.result.win_rate:.0%}",
+                "交易數": r.result.trade_count,
+            }
             row.update(r.params)
             rows.append(row)
 
@@ -233,7 +302,7 @@ with tab_backtest:
             out = run_backtest(
                 config,
                 engine,
-                llm_provider=get_provider(settings),
+                llm_provider=_active_provider,
                 db_path=settings.db_path if persist else None,
             )
         except DataUnavailableError as exc:
@@ -264,16 +333,64 @@ with tab_backtest:
                 )
             )
 
-        st.subheader("AI 回測分析")
-        st.write(out.report.summary)
-        st.write(
-            f"風險等級：**{out.report.risk_level}**　·　"
-            f"Paper Trading 就緒：{'✅' if out.report.paper_trading_ready else '⚠️ 尚未'}"
-        )
-        for s in out.report.suggestions:
-            st.write(f"- {s}")
+        analysis_title = "AI 回測分析" if not _is_offline else "回測分析（規則模式）"
+        st.subheader(analysis_title)
+        if _is_offline:
+            st.caption("ℹ️ 以下為規則判斷，非 LLM 生成。在左側設定 LLM Provider 後可啟用 AI 敘述。")
+
+        col_l, col_r = st.columns([1, 2])
+        with col_l:
+            st.metric("風險等級", out.report.risk_level)
+            st.metric("Paper Trading 就緒", "✅ 是" if out.report.paper_trading_ready else "⚠️ 尚未")
+        with col_r:
+            st.write(out.report.summary)
+            for s in out.report.suggestions:
+                st.write(f"- {s}")
+
         if out.report.narrative:
-            st.write(out.report.narrative)
+            st.info(f"🤖 **AI 敘述（{_active_provider.name}）**\n\n{out.report.narrative}")
+
+        # AI 策略顧問：根據回測期間的價格特徵建議下一步策略
+        if not _is_offline:
+            st.subheader("🤖 AI 策略顧問")
+            with st.spinner("AI 分析市場特徵中…"):
+                bars = _fetch_bars(symbol, start, end, csv_dir)
+            if bars and len(bars) >= 5:
+                closes = [b.close for b in bars]
+                highs = [b.high for b in bars]
+                lows = [b.low for b in bars]
+                high_40 = max(highs[-40:]) if len(highs) >= 40 else max(highs)
+                low_40 = min(lows[-40:]) if len(lows) >= 40 else min(lows)
+                ma_60 = sum(closes[-60:]) / len(closes[-60:]) if len(closes) >= 60 else None
+                slope = None
+                if ma_60 and len(closes) >= 61:
+                    prev_ma = sum(closes[-61:-1]) / 60
+                    slope = ma_60 - prev_ma
+                features = PriceFeatures(
+                    high_40=high_40,
+                    low_40=low_40,
+                    range_pct_40=(high_40 - low_40) / low_40 if low_40 else 0,
+                    ma_60=ma_60,
+                    ma_60_slope=slope,
+                )
+                with st.spinner("AI 生成策略建議中…"):
+                    rec = recommend_strategy(features, total_capital, provider=_active_provider)
+                adv_col1, adv_col2 = st.columns(2)
+                adv_col1.metric("建議策略", rec.recommended_strategy.value)
+                adv_col2.metric("信心度", rec.confidence_level)
+                st.write("**理由：**")
+                for r_item in rec.reason:
+                    st.write(f"- {r_item}")
+                st.write("**建議參數：**")
+                st.json(rec.suggested_parameters)
+                if rec.risk_notes:
+                    st.write("**風險提醒：**")
+                    for n in rec.risk_notes:
+                        st.write(f"- ⚠️ {n}")
+                if rec.narrative:
+                    st.info(f"🤖 **AI 顧問說（{_active_provider.name}）**\n\n{rec.narrative}")
+            else:
+                st.caption("資料不足，無法產生策略建議。")
 
         st.subheader("匯出")
         d1, d2 = st.columns(2)
