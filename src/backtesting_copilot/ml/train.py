@@ -30,7 +30,7 @@ def _slope_baseline_pred(window: list[list[float]]) -> int:
     return 1 if abs(last_slope) <= 0.03 else 0
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train regime LSTM classifier")
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--start", required=True)
@@ -39,11 +39,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lookback", type=int, default=DEFAULT_LOOKBACK)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", default=str(DEFAULT_ARTIFACTS_DIR))
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = _build_arg_parser().parse_args(argv)
+    args = parser.parse_args(argv)
 
     import torch
     from torch import nn
@@ -52,9 +48,9 @@ def main(argv: list[str] | None = None) -> int:
 
     torch.manual_seed(args.seed)
 
-    bars = YFinanceProvider().get_ohlcv(
-        args.symbol, date.fromisoformat(args.start), date.fromisoformat(args.end)
-    )
+    start = date.fromisoformat(args.start)
+    end = date.fromisoformat(args.end)
+    bars = YFinanceProvider().get_ohlcv(args.symbol, start, end)
     X, y = build_sequences(
         bars, args.lookback, DEFAULT_HORIZON, DEFAULT_TREND_THRESH, DEFAULT_MIN_OSC
     )

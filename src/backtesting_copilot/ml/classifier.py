@@ -34,6 +34,7 @@ class RegimeClassifier:
         window = matrix[-self.lookback :]
         if len(window) < self.lookback:
             pad = [[0.0] * FEATURE_DIM for _ in range(self.lookback - len(window))]
+            # pad = [[0.0] * FEATURE_DIM] * (self.lookback - len(window))
             window = pad + window
         return window
 
@@ -61,6 +62,7 @@ def maybe_load_classifier(
         score_fn = _load_torch_score_fn(model_path)
     except Exception:  # noqa: BLE001 - any load failure must fall back to None
         return None
+    # score_fn = _load_torch_score_fn(model_path)
     if score_fn is None:
         return None
     return RegimeClassifier(score_fn=score_fn, lookback=lookback)
