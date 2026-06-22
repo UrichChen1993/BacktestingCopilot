@@ -10,6 +10,7 @@ from backtesting_copilot.app.runner import (
     build_engine,
     build_provider,
     run_backtest,
+    suggest_strategy,
 )
 from backtesting_copilot.config import Settings
 from backtesting_copilot.data.csv_provider import CsvProvider
@@ -54,6 +55,36 @@ def test_run_backtest_produces_result_report_and_exports():
     assert out.report_md.startswith("# 回測報告")
     # no persistence requested -> no strategy_id
     assert out.strategy_id is None
+
+
+def test_suggest_strategy_returns_recommendation_from_data():
+    settings = Settings(default_data_source="csv")
+    rec = suggest_strategy(
+        settings,
+        symbol="E2E",
+        start=date(2026, 1, 1),
+        end=date(2026, 1, 10),
+        total_capital=20000,
+        csv_dir=FIXTURES,
+    )
+    assert rec is not None
+    assert rec.recommended_strategy in (StrategyType.GRID, StrategyType.VALUE_AVERAGING)
+    assert rec.confidence_level in ("LOW", "MEDIUM", "HIGH")
+    assert rec.reason  # non-empty rationale
+    assert rec.suggested_parameters.get("total_capital") == 20000
+
+
+def test_suggest_strategy_returns_none_when_data_unavailable():
+    settings = Settings(default_data_source="csv")
+    rec = suggest_strategy(
+        settings,
+        symbol="DOES_NOT_EXIST",
+        start=date(2026, 1, 1),
+        end=date(2026, 1, 10),
+        total_capital=20000,
+        csv_dir=FIXTURES,
+    )
+    assert rec is None
 
 
 def test_run_backtest_persists_when_db_path_given(tmp_path):

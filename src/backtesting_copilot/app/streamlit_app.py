@@ -48,10 +48,24 @@ def _recent_price_range(symbol, start, end, data_source, csv_dir):
 
 st.title("AI 雙軌資金配置與回測決策系統")
 st.caption("策略由數學規則執行 · 風控由硬規則把關 · AI 負責分析 · 使用者保留最終決策權")
-st.info(
-    f"LLM provider：**{settings.llm_provider}**（無金鑰時自動離線運行）　|　"
-    f"資料來源：**{settings.default_data_source}**"
-)
+
+# Resolve the provider that will *actually* run (a configured cloud provider
+# with a missing key silently degrades to offline), so the badge reflects
+# reality rather than the configured intent.
+provider = get_provider(settings)
+llm_active = provider.name != "offline"
+
+if llm_active:
+    st.success(
+        f"🟢 LLM 已啟用：目前使用 **{provider.name}**，AI 將生成完整分析敘述　|　"
+        f"資料來源：**{settings.default_data_source}**"
+    )
+else:
+    st.info(
+        f"⚪ 離線模式：未呼叫 LLM，AI 分析改用規則式輸出"
+        f"（設定 `LLM_PROVIDER`：**{settings.llm_provider}** 與對應金鑰即可啟用）　|　"
+        f"資料來源：**{settings.default_data_source}**"
+    )
 
 with st.sidebar:
     st.header("策略輸入")
@@ -130,14 +144,18 @@ if run:
         st.stop()
 
     st.subheader("回測")
+    spinner_msg = (
+        f"AI 分析中 — 正在呼叫 {provider.name} LLM…" if llm_active else "回測計算中…"
+    )
     try:
         engine = build_engine(settings, csv_dir=csv_dir)
-        out = run_backtest(
-            config,
-            engine,
-            llm_provider=get_provider(settings),
-            db_path=settings.db_path if persist else None,
-        )
+        with st.spinner(spinner_msg):
+            out = run_backtest(
+                config,
+                engine,
+                llm_provider=provider,
+                db_path=settings.db_path if persist else None,
+            )
     except DataUnavailableError as exc:
         st.error(f"資料抓取失敗，未產生任何訊號：{exc}")
         st.stop()
@@ -167,6 +185,10 @@ if run:
         )
 
     st.subheader("AI 回測分析")
+    if out.report.narrative:
+        st.caption(f"🟢 以下敘述由 LLM（{provider.name}）即時生成")
+    else:
+        st.caption("⚪ 規則式輸出（未呼叫 LLM）")
     st.write(out.report.summary)
     st.write(
         f"風險等級：**{out.report.risk_level}**　·　"
