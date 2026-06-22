@@ -9,17 +9,20 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
+from ..ai.advisor import StrategyRecommendation, recommend_strategy
 from ..ai.analyst import BacktestReport, analyze_backtest
 from ..ai.optimizer import OptimizationAgent, OptimizationConfig, OptimizationResult
 from ..ai.provider import LLMProvider
 from ..backtest.engine import BacktestEngine
 from ..config import Settings, get_settings
 from ..data.csv_provider import CsvProvider
-from ..data.provider import DataProvider
+from ..data.provider import DataProvider, DataUnavailableError
 from ..data.yfinance_provider import YFinanceProvider
+from ..features.price_features import compute_features
 from ..models import BacktestResult, StrategyConfig
 from ..reports.exporters import result_to_markdown, trades_to_csv
 from ..risk.engine import RiskEngine
@@ -123,6 +126,35 @@ def run_backtest(
         report_md=result_to_markdown(result),
         strategy_id=strategy_id,
     )
+
+
+def suggest_strategy(
+    settings: Settings,
+    *,
+    symbol: str,
+    start: date,
+    end: date,
+    total_capital: float,
+    csv_dir: str | Path | None = None,
+    llm_provider: LLMProvider | None = None,
+) -> StrategyRecommendation | None:
+    """Recommend a strategy from recent price features, or ``None`` if no data.
+
+    Fetches OHLCV for ``symbol`` over ``[start, end]`` via the configured data
+    source, derives :class:`PriceFeatures`, and delegates to the rule-based
+    advisor (an ``llm_provider`` adds a narrative). Returns ``None`` when the
+    data source has nothing for the symbol/range.
+    """
+    setup_logging()
+    provider = build_provider(settings, csv_dir=csv_dir)
+    try:
+        bars = provider.get_ohlcv(symbol, start, end)
+    except DataUnavailableError:
+        return None
+    if not bars:
+        return None
+    features = compute_features(bars)
+    return recommend_strategy(features, total_capital, provider=llm_provider)
 
 
 def run_optimization(

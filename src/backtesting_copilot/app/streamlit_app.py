@@ -18,7 +18,7 @@ from backtesting_copilot.ai.provider import OllamaProvider, OfflineProvider, get
 from backtesting_copilot.app.runner import build_engine, build_provider, run_backtest
 from backtesting_copilot.config import Settings, get_settings
 from backtesting_copilot.data.provider import DataUnavailableError
-from backtesting_copilot.features.price_features import PriceFeatures
+from backtesting_copilot.features.price_features import compute_features
 from backtesting_copilot.models import (
     GridParams,
     StrategyConfig,
@@ -201,22 +201,6 @@ def _render_optimizer_tab() -> None:
     else:
         st.caption("Phase 1 全搜尋 + Phase 2 LLM 精細搜尋，自動找出最佳參數組合")
 
-    st.subheader("回測")
-    spinner_msg = (
-        f"AI 分析中 — 正在呼叫 {provider.name} LLM…" if llm_active else "回測計算中…"
-    )
-    try:
-        engine = build_engine(settings, csv_dir=csv_dir)
-        with st.spinner(spinner_msg):
-            out = run_backtest(
-                config,
-                engine,
-                llm_provider=provider,
-                db_path=settings.db_path if persist else None,
-            )
-    except DataUnavailableError as exc:
-        st.error(f"資料抓取失敗，未產生任何訊號：{exc}")
-        st.stop()
     opt_strategy = st.selectbox("策略（優化）", [s.value for s in StrategyType], key="opt_strategy")
     opt_symbol = st.text_input("標的（優化）", symbol, key="opt_symbol")
     opt_capital = st.number_input("總資金（優化）", min_value=1000.0, value=100_000.0, key="opt_capital")
@@ -342,20 +326,6 @@ with tab_backtest:
             st.error(f"資料抓取失敗，未產生任何訊號：{exc}")
             st.stop()
 
-    st.subheader("AI 回測分析")
-    if out.report.narrative:
-        st.caption(f"🟢 以下敘述由 LLM（{provider.name}）即時生成")
-    else:
-        st.caption("⚪ 規則式輸出（未呼叫 LLM）")
-    st.write(out.report.summary)
-    st.write(
-        f"風險等級：**{out.report.risk_level}**　·　"
-        f"Paper Trading 就緒：{'✅' if out.report.paper_trading_ready else '⚠️ 尚未'}"
-    )
-    for s in out.report.suggestions:
-        st.write(f"- {s}")
-    if out.report.narrative:
-        st.write(out.report.narrative)
         if out.strategy_id:
             st.caption(f"已儲存至 `{settings.db_path}`，strategy_id = `{out.strategy_id}`")
 
@@ -403,23 +373,7 @@ with tab_backtest:
             with st.spinner("AI 分析市場特徵中…"):
                 bars = _fetch_bars(symbol, start, end, csv_dir)
             if bars and len(bars) >= 5:
-                closes = [b.close for b in bars]
-                highs = [b.high for b in bars]
-                lows = [b.low for b in bars]
-                high_40 = max(highs[-40:]) if len(highs) >= 40 else max(highs)
-                low_40 = min(lows[-40:]) if len(lows) >= 40 else min(lows)
-                ma_60 = sum(closes[-60:]) / len(closes[-60:]) if len(closes) >= 60 else None
-                slope = None
-                if ma_60 and len(closes) >= 61:
-                    prev_ma = sum(closes[-61:-1]) / 60
-                    slope = ma_60 - prev_ma
-                features = PriceFeatures(
-                    high_40=high_40,
-                    low_40=low_40,
-                    range_pct_40=(high_40 - low_40) / low_40 if low_40 else 0,
-                    ma_60=ma_60,
-                    ma_60_slope=slope,
-                )
+                features = compute_features(bars)
                 with st.spinner("AI 生成策略建議中…"):
                     rec = recommend_strategy(features, total_capital, provider=_active_provider)
                 adv_col1, adv_col2 = st.columns(2)

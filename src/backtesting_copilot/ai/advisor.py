@@ -38,16 +38,6 @@ class StrategyRecommendation:
     narrative: str = ""
 
 
-def _grid_confidence(regime_p: float | None) -> str:
-    if regime_p is None:
-        return "MEDIUM"
-    if regime_p >= 0.7:
-        return "HIGH"
-    if regime_p >= 0.5:
-        return "MEDIUM"
-    return "LOW"
-
-
 def recommend_strategy(
     features: PriceFeatures,
     total_capital: float,
