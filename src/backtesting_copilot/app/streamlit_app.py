@@ -18,7 +18,7 @@ from backtesting_copilot.ai.provider import OllamaProvider, OfflineProvider, get
 from backtesting_copilot.app.runner import build_engine, build_provider, run_backtest
 from backtesting_copilot.config import Settings, get_settings
 from backtesting_copilot.data.provider import DataUnavailableError
-from backtesting_copilot.features.price_features import PriceFeatures
+from backtesting_copilot.features.price_features import compute_features
 from backtesting_copilot.models import (
     GridParams,
     StrategyConfig,
@@ -55,6 +55,23 @@ def _fetch_bars(symbol, start, end, csv_dir):
 st.title("AI 雙軌資金配置與回測決策系統")
 st.caption("策略由數學規則執行 · 風控由硬規則把關 · AI 負責分析 · 使用者保留最終決策權")
 
+# Resolve the provider that will *actually* run (a configured cloud provider
+# with a missing key silently degrades to offline), so the badge reflects
+# reality rather than the configured intent.
+provider = get_provider(settings)
+llm_active = provider.name != "offline"
+
+if llm_active:
+    st.success(
+        f"🟢 LLM 已啟用：目前使用 **{provider.name}**，AI 將生成完整分析敘述　|　"
+        f"資料來源：**{settings.default_data_source}**"
+    )
+else:
+    st.info(
+        f"⚪ 離線模式：未呼叫 LLM，AI 分析改用規則式輸出"
+        f"（設定 `LLM_PROVIDER`：**{settings.llm_provider}** 與對應金鑰即可啟用）　|　"
+        f"資料來源：**{settings.default_data_source}**"
+    )
 # --- Sidebar: LLM 設定區 ---
 with st.sidebar:
     st.header("LLM 設定")
@@ -356,23 +373,7 @@ with tab_backtest:
             with st.spinner("AI 分析市場特徵中…"):
                 bars = _fetch_bars(symbol, start, end, csv_dir)
             if bars and len(bars) >= 5:
-                closes = [b.close for b in bars]
-                highs = [b.high for b in bars]
-                lows = [b.low for b in bars]
-                high_40 = max(highs[-40:]) if len(highs) >= 40 else max(highs)
-                low_40 = min(lows[-40:]) if len(lows) >= 40 else min(lows)
-                ma_60 = sum(closes[-60:]) / len(closes[-60:]) if len(closes) >= 60 else None
-                slope = None
-                if ma_60 and len(closes) >= 61:
-                    prev_ma = sum(closes[-61:-1]) / 60
-                    slope = ma_60 - prev_ma
-                features = PriceFeatures(
-                    high_40=high_40,
-                    low_40=low_40,
-                    range_pct_40=(high_40 - low_40) / low_40 if low_40 else 0,
-                    ma_60=ma_60,
-                    ma_60_slope=slope,
-                )
+                features = compute_features(bars)
                 with st.spinner("AI 生成策略建議中…"):
                     rec = recommend_strategy(features, total_capital, provider=_active_provider)
                 adv_col1, adv_col2 = st.columns(2)

@@ -18,16 +18,6 @@ RANGE_BOUND_MAX_SLOPE_PCT = 0.03  # |60MA slope| small => range-bound
 MIN_RANGE_PCT_FOR_GRID = 0.06  # need enough amplitude to justify grid
 
 
-@dataclass
-class StrategyRecommendation:
-    recommended_strategy: StrategyType
-    confidence_level: str  # LOW | MEDIUM | HIGH
-    reason: list[str] = field(default_factory=list)
-    suggested_parameters: dict = field(default_factory=dict)
-    risk_notes: list[str] = field(default_factory=list)
-    narrative: str = ""
-
-
 def _grid_confidence(regime_p: float | None) -> str:
     if regime_p is None:
         return "MEDIUM"
@@ -36,6 +26,16 @@ def _grid_confidence(regime_p: float | None) -> str:
     if regime_p >= 0.5:
         return "MEDIUM"
     return "LOW"
+
+
+@dataclass
+class StrategyRecommendation:
+    recommended_strategy: StrategyType
+    confidence_level: str  # LOW | MEDIUM | HIGH
+    reason: list[str] = field(default_factory=list)
+    suggested_parameters: dict = field(default_factory=dict)
+    risk_notes: list[str] = field(default_factory=list)
+    narrative: str = ""
 
 
 def recommend_strategy(
@@ -56,6 +56,9 @@ def recommend_strategy(
         slope_pct = features.ma_60_slope / features.ma_60
 
     range_ok = features.range_pct_40 >= MIN_RANGE_PCT_FOR_GRID
+
+    if classifier is not None and not bars:
+        raise ValueError("bars must be provided when classifier is given")
 
     regime_p = None
     if classifier is not None and bars:
