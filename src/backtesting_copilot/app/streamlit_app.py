@@ -375,7 +375,12 @@ with tab_backtest:
             if bars and len(bars) >= 5:
                 features = compute_features(bars)
                 with st.spinner("AI 生成策略建議中…"):
-                    rec = recommend_strategy(features, total_capital, provider=_active_provider)
+                    rec = recommend_strategy(
+                        features,
+                        total_capital,
+                        provider=_active_provider,
+                        market_filter_enabled=market_filter,
+                    )
                 adv_col1, adv_col2 = st.columns(2)
                 adv_col1.metric("建議策略", rec.recommended_strategy.value)
                 adv_col2.metric("信心度", rec.confidence_level)

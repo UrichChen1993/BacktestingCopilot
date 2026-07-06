@@ -44,6 +44,7 @@ def recommend_strategy(
     *,
     provider: LLMProvider | None = None,
     market_below_ma: bool = False,
+    market_filter_enabled: bool = False,
     classifier=None,  # ml.classifier.RegimeClassifier | None
     bars=None,        # list[Bar] | None, required when classifier is given
 ) -> StrategyRecommendation:
@@ -82,7 +83,8 @@ def recommend_strategy(
             "total_capital": total_capital,
         }
         risk_notes.append("若跌破區間下緣，應暫停加碼")
-        risk_notes.append("建議啟用 60MA 大盤濾網")
+        if not market_filter_enabled:
+            risk_notes.append("建議啟用 60MA 大盤濾網")
     else:
         strategy = StrategyType.VALUE_AVERAGING
         confidence = "MEDIUM" if not range_ok else "LOW"

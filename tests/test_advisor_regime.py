@@ -45,6 +45,23 @@ def test_none_classifier_keeps_existing_behavior():
     assert rec.reason
 
 
+_FILTER_NOTE = "建議啟用 60MA 大盤濾網"
+
+
+def test_grid_suggests_market_filter_when_disabled():
+    feats = compute_features(_bars(_RANGEY))
+    rec = recommend_strategy(feats, 100000, market_filter_enabled=False)
+    assert rec.recommended_strategy == StrategyType.GRID
+    assert _FILTER_NOTE in rec.risk_notes
+
+
+def test_grid_omits_market_filter_note_when_already_enabled():
+    feats = compute_features(_bars(_RANGEY))
+    rec = recommend_strategy(feats, 100000, market_filter_enabled=True)
+    assert rec.recommended_strategy == StrategyType.GRID
+    assert _FILTER_NOTE not in rec.risk_notes
+
+
 @pytest.mark.parametrize(
     "p, expected",
     [(None, "MEDIUM"), (0.7, "HIGH"), (0.69, "MEDIUM"), (0.5, "MEDIUM"), (0.499, "LOW")],
