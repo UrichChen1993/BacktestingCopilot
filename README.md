@@ -8,11 +8,13 @@
 
 ## 目前範圍：V1 MVP
 
-回測 + 風控檢查 + AI 策略建議 + AI 回測分析 + Streamlit 介面 + CSV/Markdown 匯出。**不接實單交易。**
+回測 + 風控檢查 + AI 策略建議 + AI 參數優化 + AI 回測分析 + Streamlit 介面 + REST API + Next.js 前端 + CSV/Markdown 匯出。**不接實單交易。**
 
 - 兩種策略：波動套利網格（Grid）、動態價值平均（Value Averaging）
 - 大盤 60MA 風控、跌破區間、資金使用率、最大回撤等硬規則
-- AI 層可切換 Claude / OpenAI；**無金鑰時自動使用規則式離線報告**
+- AI 層可切換 Claude / OpenAI / Gemini / Ollama；**無金鑰時自動使用規則式離線報告**
+- AI 參數優化（網格搜尋）協助挑選策略參數
+- 兩種介面：Streamlit（單機）與 FastAPI REST API + Next.js 前端
 - 資料來源：yfinance（優先）/ CSV（離線）
 
 詳見 [設計文件](docs/superpowers/specs/2026-06-09-backtesting-copilot-mvp-design.md)。
@@ -34,13 +36,32 @@ pytest
 
 # Streamlit 介面
 streamlit run src/backtesting_copilot/app/streamlit_app.py
+
+# REST API（FastAPI，預設 http://localhost:8000，文件在 /docs）
+uvicorn backtesting_copilot.app.api.main:app --reload --app-dir src
 ```
+
+### Next.js 前端
+
+```powershell
+cd frontend
+npm install
+npm run dev   # http://localhost:3000，需先啟動上方 REST API
+```
+
+主要 API 端點（皆掛在 `/api` 前綴下）：
+
+- `POST /api/backtest`：執行回測
+- `POST /api/optimize`：AI 參數優化（網格搜尋）
+- `GET  /api/advisor`：AI 策略建議
 
 ## 架構
 
 ```
-使用者輸入 → AI 策略建議 → 參數驗證 → 策略引擎(網格/價值平均)
+使用者輸入 → AI 策略建議 → AI 參數優化 → 參數驗證 → 策略引擎(網格/價值平均)
   → 風控引擎 → 回測引擎 → AI 回測分析 → 使用者確認 → (V2+) 模擬/半自動交易
+
+介面層：Streamlit（單機） 或 Next.js 前端 → FastAPI REST API → 上述核心流程
 ```
 
 ## 開發階段

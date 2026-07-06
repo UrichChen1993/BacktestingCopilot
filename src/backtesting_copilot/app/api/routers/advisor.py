@@ -21,6 +21,7 @@ def get_advisor(
     end_date: str = Query(...),
     total_capital: float = Query(...),
     llm_provider: str = Query("offline"),
+    market_filter_enabled: bool = Query(False),
 ):
     try:
         settings = get_settings()
@@ -42,7 +43,12 @@ def get_advisor(
             features = compute_features(bars)
 
         llm = get_provider(settings)
-        rec = recommend_strategy(features, total_capital, provider=llm)
+        rec = recommend_strategy(
+            features,
+            total_capital,
+            provider=llm,
+            market_filter_enabled=market_filter_enabled,
+        )
 
         return AdvisorResponse(
             recommended_strategy=rec.recommended_strategy.value,
