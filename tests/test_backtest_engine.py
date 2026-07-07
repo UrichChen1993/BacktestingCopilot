@@ -108,6 +108,7 @@ def test_buy_then_sell_realizes_profit():
     assert result.realized_profit == pytest.approx(396)
     assert result.remaining_cash == pytest.approx(20396)
     assert result.final_value == pytest.approx(20396)
+    assert result.cash_usage_rate == pytest.approx(0.0)
     assert result.win_rate == pytest.approx(1.0)
     assert result.total_return == pytest.approx(396 / 20000)
 

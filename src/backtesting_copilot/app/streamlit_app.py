@@ -30,6 +30,16 @@ from backtesting_copilot.validator import validate_config
 st.set_page_config(page_title="AI 雙軌回測 Copilot", layout="wide")
 settings = get_settings()
 
+# Applied before the sidebar widgets below are instantiated: Streamlit forbids
+# writing to st.session_state[key] once a widget with that key has already
+# been created in the current run, so the "套用最佳參數到回測頁" button (in
+# _render_optimizer_tab, which runs after the sidebar) can't set these keys
+# directly — it stores the pending values here and reruns instead.
+_pending_apply = st.session_state.pop("opt_pending_apply", None)
+if _pending_apply:
+    for _key, _value in _pending_apply.items():
+        st.session_state[_key] = _value
+
 
 @st.cache_data(show_spinner=False)
 def _recent_price_range(symbol, start, end, data_source, csv_dir):
@@ -160,10 +170,10 @@ with st.sidebar:
         widget_key = f"{symbol}_{start}_{end}"
         price_lower = st.number_input("區間下限", value=lo, key=f"grid_lo_{widget_key}")
         price_upper = st.number_input("區間上限", value=hi, key=f"grid_hi_{widget_key}")
-        grid_num = st.number_input("網格層數", min_value=1, max_value=12, value=6)
+        grid_num = st.number_input("網格層數", min_value=1, max_value=12, value=6, key="grid_num_input")
     else:
-        total_periods = st.number_input("總扣款次數", min_value=1, value=4)
-        interval_days = st.number_input("每期間隔天數", min_value=1, value=14)
+        total_periods = st.number_input("總扣款次數", min_value=1, value=4, key="total_periods_input")
+        interval_days = st.number_input("每期間隔天數", min_value=1, value=14, key="interval_days_input")
 
     market_filter = st.checkbox("啟用大盤 60MA 濾網", value=True)
     persist = st.checkbox("儲存此次回測到資料庫 (SQLite)", value=False)
@@ -209,15 +219,40 @@ def _render_optimizer_tab() -> None:
     max_rounds = st.slider("LLM 精細輪數上限", 0, 10, 3, key="opt_max_rounds")
 
     if opt_strategy == StrategyType.GRID.value:
+        opt_price_range = _recent_price_range(
+            opt_symbol, opt_start, opt_end, settings.default_data_source, csv_dir
+        )
+        if opt_price_range is not None:
+            opt_lo, opt_hi = opt_price_range
+            st.caption(
+                f"已依 {opt_symbol} {opt_start}~{opt_end} 的近期高低自動帶入預設搜尋範圍"
+                f"（{opt_lo:.2f}~{opt_hi:.2f}），可自行調整"
+            )
+        else:
+            opt_lo, opt_hi = 100.0, 112.0
+            st.caption("⚠️ 無法抓取近期價格，已套用預設區間，請自行確認")
+        pl_min_default = round(opt_lo * 0.9, 2)
+        pl_max_default = round(opt_lo * 1.05, 2)
+        pu_min_default = round(opt_hi * 0.95, 2)
+        pu_max_default = round(opt_hi * 1.1, 2)
+        step_default = max(round((pl_max_default - pl_min_default) / 3, 2), 0.5)
+        # Key includes symbol/dates so changing them resets defaults to the
+        # freshly fetched range (Streamlit otherwise keeps the edited value).
+        opt_widget_key = f"{opt_symbol}_{opt_start}_{opt_end}"
+
         col1, col2 = st.columns(2)
         with col1:
-            pl_min = st.number_input("price_lower 最小", value=90.0, key="pl_min")
-            pl_max = st.number_input("price_lower 最大", value=105.0, key="pl_max")
-            pl_step = st.number_input("price_lower 步距", value=5.0, min_value=0.5, key="pl_step")
+            pl_min = st.number_input("price_lower 最小", value=pl_min_default, key=f"pl_min_{opt_widget_key}")
+            pl_max = st.number_input("price_lower 最大", value=pl_max_default, key=f"pl_max_{opt_widget_key}")
+            pl_step = st.number_input(
+                "price_lower 步距", value=step_default, min_value=0.5, key=f"pl_step_{opt_widget_key}"
+            )
         with col2:
-            pu_min = st.number_input("price_upper 最小", value=110.0, key="pu_min")
-            pu_max = st.number_input("price_upper 最大", value=125.0, key="pu_max")
-            pu_step = st.number_input("price_upper 步距", value=5.0, min_value=0.5, key="pu_step")
+            pu_min = st.number_input("price_upper 最小", value=pu_min_default, key=f"pu_min_{opt_widget_key}")
+            pu_max = st.number_input("price_upper 最大", value=pu_max_default, key=f"pu_max_{opt_widget_key}")
+            pu_step = st.number_input(
+                "price_upper 步距", value=step_default, min_value=0.5, key=f"pu_step_{opt_widget_key}"
+            )
         grid_nums = st.multiselect("grid_num 候選", [4, 6, 8, 10], default=[4, 6, 8], key="opt_grid_num")
 
         import numpy as np
@@ -259,7 +294,6 @@ def _render_optimizer_tab() -> None:
         provider = _active_provider
 
         progress_placeholder = st.empty()
-        results_placeholder = st.empty()
 
         def update_progress(msg: str) -> None:
             progress_placeholder.info(msg)
@@ -268,7 +302,15 @@ def _render_optimizer_tab() -> None:
             out = run_optimization(opt_cfg, engine, provider, on_progress=update_progress)
 
         progress_placeholder.success(f"優化完成（{out.stopped_reason}）最佳 score = {out.best_score:.4f}")
+        # Stored in session_state (not a local var) so the results table and
+        # apply button below survive the rerun triggered by clicking them —
+        # otherwise this whole block only exists on the run where 啟動優化
+        # itself was clicked, and "套用最佳參數" would disappear before it
+        # could do anything.
+        st.session_state["opt_result"] = out
 
+    out = st.session_state.get("opt_result")
+    if out is not None:
         import pandas as _pd
 
         rows = []
@@ -285,14 +327,27 @@ def _render_optimizer_tab() -> None:
             rows.append(row)
 
         df = _pd.DataFrame(rows).sort_values("score", ascending=False).reset_index(drop=True)
-        results_placeholder.dataframe(df, use_container_width=True)
+        st.dataframe(df, use_container_width=True)
 
         st.subheader("最佳參數")
         st.json(out.best_params)
         if st.button("套用最佳參數到回測頁", key="opt_apply"):
+            backtest_widget_key = f"{symbol}_{start}_{end}"
+            pending: dict[str, object] = {}
             for k, v in out.best_params.items():
-                st.session_state[f"opt_applied_{k}"] = v
-            st.info("參數已寫入 session_state，請切換到「回測」頁手動填入。")
+                if k == "price_lower":
+                    pending[f"grid_lo_{backtest_widget_key}"] = v
+                elif k == "price_upper":
+                    pending[f"grid_hi_{backtest_widget_key}"] = v
+                elif k == "grid_num":
+                    pending["grid_num_input"] = int(v)
+                elif k == "total_periods":
+                    pending["total_periods_input"] = int(v)
+                elif k == "interval_days":
+                    pending["interval_days_input"] = int(v)
+            st.session_state["opt_pending_apply"] = pending
+            st.success("已套用最佳參數，請切換至「回測」頁查看並重新執行回測。")
+            st.rerun()
 
 
 tab_backtest, tab_optimizer = st.tabs(["回測", "自動優化"])

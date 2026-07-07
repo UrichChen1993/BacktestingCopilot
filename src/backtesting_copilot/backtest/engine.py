@@ -312,7 +312,7 @@ class BacktestEngine:
         avg_cost = cost_basis / holding_qty if holding_qty else 0.0
         unrealized_profit = holding_qty * last_close - cost_basis
         final_value = cash + holding_qty * last_close
-        used = config.total_capital - cash
+        used = max(config.total_capital - cash, 0.0)
         return BacktestResult(
             strategy_type=config.strategy_type,
             symbol=config.symbol,
